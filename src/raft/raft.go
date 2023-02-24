@@ -57,13 +57,14 @@ type Config struct {
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
-	mu           sync.RWMutex        // Lock to protect shared access to this peer's state
-	peers        []*labrpc.ClientEnd // RPC end points of all peers
-	persister    *Persister          // Object to hold this peer's persisted state
-	me           int                 // this peer's index into peers[]
-	dead         int32               // set by Kill()
-	resetTimerCh chan struct{}
-	electionCnt  int
+	mu                  sync.RWMutex        // Lock to protect shared access to this peer's state
+	peers               []*labrpc.ClientEnd // RPC end points of all peers
+	persister           *Persister          // Object to hold this peer's persisted state
+	me                  int                 // this peer's index into peers[]
+	dead                int32               // set by Kill()
+	resetTimerCh        chan struct{}
+	electionCnt         int
+	leaderAppendEntryCh chan struct{}
 
 	tracer *logrus.Entry
 	config Config
@@ -265,27 +266,27 @@ func (rf *Raft) heartBeat() {
 
 	subTracer.Debug("send AppendEntries rpc to peers")
 
+	rf.leaderAppendEntryCh = make(chan struct{})
+
+	rf.mu.Lock()
+
+	logs := rf.logs
+
+	rf.mu.Unlock()
+
 	for idx, peer := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
-		args, _ := rf.fillAppendEntriesRequest(idx)
-		subTracer := subTracer.WithField("peer", idx)
-		go func(peer *labrpc.ClientEnd, idx int) {
-			var reply AppendEntriesReply
-			subTracer.Debug("send rpc AppendEntries")
-			if ok := peer.Call("Raft.AppendEntries", args, &reply); ok {
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-				if reply.Success {
-					rf.nextIndex[idx] = args.PreLogIndex + 2
-				} else {
+		replicator := &Replicator{
+			me:   rf.me,
+			i:    idx,
+			peer: peer,
+			raft: rf,
+			logs: logs,
+		}
 
-				}
-			} else {
-				subTracer.Warning("peer offline")
-			}
-		}(peer, idx)
+		go replicator.start(rf.leaderAppendEntryCh)
 	}
 }
 
