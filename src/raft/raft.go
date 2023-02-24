@@ -223,38 +223,74 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 	return ok
 }
 
-func (rf *Raft) fillAppendEntriesRequest() AppendEntriesRequest {
+func (rf *Raft) fillAppendEntriesRequest(i int) (AppendEntriesRequest, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	args := AppendEntriesRequest{
-		Term: rf.currentTerm,
+		Term:         rf.currentTerm,
+		LeaderId:     rf.me,
+		LeaderCommit: rf.commitIndex,
 	}
-	return args
+
+	if len(rf.logs) == 0 {
+		args.PreLogIndex = -1
+		args.PreLogTerm = -1
+		return args, true
+	}
+
+	nextIndex := rf.nextIndex[i]
+	if nextIndex == -1 {
+		args.PreLogIndex = len(rf.logs) - 1
+		args.PreLogTerm = rf.logs[len(rf.logs)-1].Term
+	} else {
+		args.PreLogIndex = nextIndex - 1
+		if args.PreLogIndex < 0 {
+			args.PreLogTerm = -1
+		} else {
+			args.PreLogTerm = rf.logs[args.PreLogIndex].Term
+		}
+		if nextIndex < len(rf.logs) {
+			args.Entries = rf.logs[nextIndex : nextIndex+1]
+		} else {
+			return args, false
+		}
+	}
+	return args, true
 }
 
 func (rf *Raft) heartBeat() {
 	subTracer := rf.tracer.WithField("Term", rf.currentTerm)
-	subTracer.Info("start heart beat")
+	subTracer.Debug("start heart beat")
 
-	args := rf.fillAppendEntriesRequest()
-	subTracer.Info("send AppendEntries rpc to peers")
+	subTracer.Debug("send AppendEntries rpc to peers")
 
 	for idx, peer := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
+		args, _ := rf.fillAppendEntriesRequest(idx)
 		subTracer := subTracer.WithField("peer", idx)
-		go func(peer *labrpc.ClientEnd) {
+		go func(peer *labrpc.ClientEnd, idx int) {
 			var reply AppendEntriesReply
-			subTracer.Info("send rpc AppendEntries")
+			subTracer.Debug("send rpc AppendEntries")
 			if ok := peer.Call("Raft.AppendEntries", args, &reply); ok {
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+				if reply.Success {
+					rf.nextIndex[idx] = args.PreLogIndex + 2
+				} else {
 
+				}
 			} else {
 				subTracer.Warning("peer offline")
 			}
-		}(peer)
+		}(peer, idx)
 	}
+}
+
+func (rf *Raft) syncWithPeer(i int) {
+
 }
 
 type AppendEntriesRequest struct {
@@ -281,13 +317,21 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 		return
 	}
 
+	rf.resetTimer()
 	rf.currentTerm = args.Term
 	rf.isLeader = false
 	rf.voteFor = -1
 
-	reply.Success = true
+	reply.Success = false
 	reply.Term = rf.currentTerm
-	rf.resetTimer()
+
+	if args.PreLogIndex == -1 {
+		reply.Success = true
+		rf.logs = rf.logs[:0]
+	} else if args.PreLogIndex < len(rf.logs) && rf.logs[args.PreLogIndex].Term == args.PreLogTerm {
+		rf.logs = append(rf.logs[:args.PreLogIndex+1], args.Entries...)
+		reply.Success = true
+	}
 	return
 }
 
@@ -341,7 +385,7 @@ func (rf *Raft) ticker() {
 		case <-timer.C:
 			go rf.handleTimeout()
 		case <-rf.resetTimerCh:
-			rf.tracer.Info("reset timer")
+			rf.tracer.Debug("reset timer")
 		}
 		timer.Reset(rf.config.electionTimeout)
 	}
@@ -352,10 +396,10 @@ func (rf *Raft) handleTimeout() {
 	defer rf.mu.Unlock()
 
 	if rf.isLeader {
-		rf.tracer.Info("timeout, start heart beat")
+		rf.tracer.Debug("timeout, start heart beat")
 		go rf.heartBeat()
 	} else {
-		rf.tracer.Info("timeout, start election")
+		rf.tracer.Debug("timeout, start election")
 		go rf.election()
 	}
 }
@@ -400,7 +444,7 @@ func (rf *Raft) election() {
 	wg.Add(peers)
 	go func() { wg.Wait(); close(replyCh) }()
 
-	subTracer.Info("send requestVote rpc to peers")
+	subTracer.Debug("send requestVote rpc to peers")
 	for idx, _ := range rf.peers {
 		idx := idx
 		if idx == rf.me {
@@ -410,14 +454,14 @@ func (rf *Raft) election() {
 		go func(server int) {
 			defer func() { wg.Done() }()
 			subTracer := subTracer.WithField("peer", server)
-			subTracer.Info("send rpc requestVote")
+			subTracer.Debug("send rpc requestVote")
 			var reply RequestVoteReply
 			if ok := rf.sendRequestVote(idx, args, &reply); ok {
 				if reply.VoteGranted == true {
-					subTracer.Info("election granted")
+					subTracer.Debug("election granted")
 					replyCh <- struct{}{}
 				} else {
-					subTracer.Info("grant forbidden")
+					subTracer.Debug("grant forbidden")
 					rf.mu.Lock()
 					defer rf.mu.Unlock()
 
@@ -431,12 +475,14 @@ func (rf *Raft) election() {
 
 	for range replyCh {
 		if votes++; votes > peers/2 {
-			subTracer.Info("win the election")
+			subTracer.Debug("win the election")
 			rf.mu.Lock()
 			if rf.electionCnt == currentElectionCnt {
 				rf.isLeader = true
 				rf.voteFor = -1
-				rf.currentTerm++
+				for idx := 0; idx < len(rf.nextIndex); idx++ {
+					rf.nextIndex[idx] = len(rf.logs)
+				}
 			}
 			rf.mu.Unlock()
 			rf.resetTimer()
