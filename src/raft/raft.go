@@ -264,34 +264,31 @@ func (rf *Raft) heartBeat() {
 	subTracer := rf.tracer.WithField("Term", rf.currentTerm)
 	subTracer.Debug("start heart beat")
 
-	subTracer.Debug("send AppendEntries rpc to peers")
-
-	rf.leaderAppendEntryCh = make(chan struct{})
-
 	rf.mu.Lock()
-
 	logs := rf.logs
-
+	if rf.leaderAppendEntryCh != nil {
+		close(rf.leaderAppendEntryCh)
+	}
+	rf.leaderAppendEntryCh = make(chan struct{})
 	rf.mu.Unlock()
 
-	for idx, peer := range rf.peers {
+	subTracer = subTracer.WithField("role", "replicator")
+
+	for idx := 0; idx < len(rf.peers); idx++ {
 		if idx == rf.me {
 			continue
 		}
 		replicator := &Replicator{
-			me:   rf.me,
-			i:    idx,
-			peer: peer,
-			raft: rf,
-			logs: logs,
+			me:     rf.me,
+			i:      idx,
+			peer:   rf.peers[idx],
+			raft:   rf,
+			logs:   logs,
+			tracer: subTracer.WithField("peer", idx),
 		}
 
 		go replicator.start(rf.leaderAppendEntryCh)
 	}
-}
-
-func (rf *Raft) syncWithPeer(i int) {
-
 }
 
 type AppendEntriesRequest struct {
@@ -310,9 +307,15 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 
-	if args.Term < rf.currentTerm {
+	defer func() {
+		if args.Term > rf.currentTerm {
+			rf.currentTerm = args.Term
+		}
+		rf.mu.Unlock()
+	}()
+
+	if args.Term < rf.currentTerm || args.PreLogIndex+1 < len(rf.logs)-1 {
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		return
@@ -320,13 +323,18 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 
 	rf.resetTimer()
 	rf.currentTerm = args.Term
+
 	rf.isLeader = false
+	if rf.leaderAppendEntryCh != nil {
+		close(rf.leaderAppendEntryCh)
+		rf.leaderAppendEntryCh = nil
+	}
 	rf.voteFor = -1
 
 	reply.Success = false
 	reply.Term = rf.currentTerm
 
-	if args.PreLogIndex == -1 {
+	if args.PreLogIndex < 0 {
 		reply.Success = true
 		rf.logs = rf.logs[:0]
 	} else if args.PreLogIndex < len(rf.logs) && rf.logs[args.PreLogIndex].Term == args.PreLogTerm {
@@ -379,6 +387,9 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) ticker() {
 	timer := time.NewTimer(rf.config.electionTimeout)
+
+	rf.tracer.Debugf("raft start with election timeout = %s", rf.config.electionTimeout.String())
+
 	for rf.killed() == false {
 		// Your code here (2A)
 		// Check if a leader election should be started.
@@ -397,8 +408,7 @@ func (rf *Raft) handleTimeout() {
 	defer rf.mu.Unlock()
 
 	if rf.isLeader {
-		rf.tracer.Debug("timeout, start heart beat")
-		go rf.heartBeat()
+		rf.tracer.Debug("leader ignore the heartbeat, will be done by replicator")
 	} else {
 		rf.tracer.Debug("timeout, start election")
 		go rf.election()
