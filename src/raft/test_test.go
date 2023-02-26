@@ -478,23 +478,28 @@ func TestRejoin2B(t *testing.T) {
 	cfg.disconnect(leader1)
 
 	// make old leader try to agree on some entries
+	DPrintf("send message to old leader, id=%d", leader1)
 	cfg.rafts[leader1].Start(102)
 	cfg.rafts[leader1].Start(103)
 	cfg.rafts[leader1].Start(104)
 
 	// new leader commits, also for index=2
+	DPrintf("commit a new message")
 	cfg.one(103, 2, true)
 
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
+	DPrintf("disconnect leader - id = %d", leader2)
 	cfg.disconnect(leader2)
 
 	// old leader connected again
+	DPrintf("connect old leader - id = %d", leader1)
 	cfg.connect(leader1)
 
 	cfg.one(104, 2, true)
 
 	// all together now
+	DPrintf("connect old leader - id = %d", leader2)
 	cfg.connect(leader2)
 
 	cfg.one(105, servers, true)
@@ -513,27 +518,35 @@ func TestBackup2B(t *testing.T) {
 
 	// put leader and one follower in a partition
 	leader1 := cfg.checkOneLeader()
+	DPrintf("disconnect peers, leader=%d, peers=%d,%d,%d", leader1, (leader1+2)%servers,
+		(leader1+3)%servers, (leader1+4)%servers)
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
 
 	// submit lots of commands that won't commit
 	for i := 0; i < 50; i++ {
+		DPrintf("submit message")
 		cfg.rafts[leader1].Start(rand.Int())
 	}
 
 	time.Sleep(RaftElectionTimeout / 2)
 
+	DPrintf("disconnect peers=%d,%d", (leader1+0)%servers,
+		(leader1+1)%servers)
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
 	// allow other partition to recover
+	DPrintf("reconnect peers=%d,%d, %d", (leader1+2)%servers,
+		(leader1+3)%servers, (leader1+4)%servers)
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
+		DPrintf("submit message - should commit")
 		cfg.one(rand.Int(), 3, true)
 	}
 
@@ -543,6 +556,7 @@ func TestBackup2B(t *testing.T) {
 	if leader2 == other {
 		other = (leader2 + 1) % servers
 	}
+	DPrintf("disconnect peer - %d", other)
 	cfg.disconnect(other)
 
 	// lots more commands that won't commit

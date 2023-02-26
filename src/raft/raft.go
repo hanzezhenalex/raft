@@ -50,6 +50,8 @@ type ApplyMsg struct {
 	Snapshot      []byte
 	SnapshotTerm  int
 	SnapshotIndex int
+
+	Peer int
 }
 
 type Config struct {
@@ -186,11 +188,26 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) &&
-		args.LastLogIndex >= len(rf.logs)-1 {
+		rf.canBeLeader(args) {
 		rf.voteFor = args.CandidateId
 		rf.isLeader = false
 
 		reply.VoteGranted = true
+	}
+}
+
+// with lock
+func (rf *Raft) canBeLeader(args RequestVoteArgs) bool {
+	lastEntryTerm := -1
+	if len(rf.logs) > 0 {
+		lastEntryTerm = rf.logs[len(rf.logs)-1].Term
+	}
+	if lastEntryTerm > args.LastLogTerm {
+		return false
+	} else if lastEntryTerm == args.LastLogTerm {
+		return args.LastLogIndex >= len(rf.logs)-1
+	} else {
+		return true
 	}
 }
 
@@ -302,10 +319,12 @@ func (rf *Raft) applyMsg(newCommitIndex int) {
 		command := rf.logs[rf.commitIndex].Command
 
 		go func() {
+			rf.tracer.Debugf("commit: command=%#v, index=%d", command, newCommitIndex)
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,
 				CommandIndex: newCommitIndex,
 				Command:      command,
+				Peer:         rf.me,
 			}
 		}()
 	}
@@ -385,7 +404,8 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 		rf.mu.Unlock()
 	}()
 
-	if args.Term < rf.currentTerm || args.PreLogIndex+1 < len(rf.logs)-1 {
+	if args.Term < rf.currentTerm ||
+		args.LeaderCommit < rf.commitIndex {
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		return
@@ -412,20 +432,30 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 		reply.Success = true
 	}
 
-	newCommitted := args.LeaderCommit
-	if newCommitted > len(rf.logs)-1 {
-		newCommitted = len(rf.logs) - 1
-	}
+	if reply.Success {
+		newCommitted := args.LeaderCommit
+		if newCommitted > len(rf.logs)-1 {
+			newCommitted = len(rf.logs) - 1
+		}
 
-	if newCommitted > rf.commitIndex {
-		rf.commitIndex = newCommitted
-		go func() {
-			rf.applyCh <- ApplyMsg{
-				CommandValid: true,
-				CommandIndex: rf.commitIndex,
-				Command:      rf.logs[rf.commitIndex].Command,
+		if newCommitted > rf.commitIndex {
+			old := rf.commitIndex
+			if old < 0 {
+				old = 0
 			}
-		}()
+			rf.commitIndex = newCommitted
+			go func() {
+				rf.tracer.Debugf("commit: command=%#v, index=%d", rf.logs[rf.commitIndex].Command, newCommitted)
+				for i := old; i <= newCommitted; i++ {
+					rf.applyCh <- ApplyMsg{
+						CommandValid: true,
+						CommandIndex: i,
+						Command:      rf.logs[i].Command,
+						Peer:         rf.me,
+					}
+				}
+			}()
+		}
 	}
 	return
 }
@@ -488,8 +518,8 @@ func (rf *Raft) ticker() {
 	for rf.killed() == false {
 		// Your code here (2A)
 		// Check if a leader election should be started.
-		rf.tracer.Debugf("raft status: logs=%d, committed=%d, term=%d",
-			len(rf.logs), rf.commitIndex, rf.currentTerm)
+		rf.tracer.Debugf("raft status: logs=%d, committed=%d, term=%d, leader=%t",
+			len(rf.logs), rf.commitIndex, rf.currentTerm, rf.isLeader)
 		select {
 		case <-timer.C:
 			go rf.handleTimeout()
