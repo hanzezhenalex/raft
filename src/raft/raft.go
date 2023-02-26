@@ -20,6 +20,7 @@ package raft
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,6 +66,7 @@ type Raft struct {
 	resetTimerCh        chan struct{}
 	electionCnt         int
 	leaderAppendEntryCh chan struct{}
+	applyCh             chan ApplyMsg
 
 	tracer *logrus.Entry
 	config Config
@@ -86,8 +88,8 @@ type Raft struct {
 }
 
 type Log struct {
-	Term int
-	Raw  []byte
+	Term    int
+	Command interface{}
 }
 
 // return currentTerm and whether this server
@@ -260,6 +262,55 @@ func (rf *Raft) fillAppendEntriesRequest(i int) (AppendEntriesRequest, bool) {
 	return args, true
 }
 
+type commit struct {
+	peer  int
+	index int
+}
+
+func (rf *Raft) updateCommittedIndex(committedIndex []int) int {
+	type pair struct {
+		i         int
+		committed int
+	}
+
+	pairs := make([]pair, 0, len(committedIndex)-1)
+	for i := 0; i < len(committedIndex); i++ {
+		if i == rf.me {
+			continue
+		}
+		pairs = append(pairs, pair{
+			i:         i,
+			committed: committedIndex[i],
+		})
+	}
+
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].committed < pairs[j].committed
+	})
+
+	mid := len(pairs) / 2
+
+	return pairs[mid].committed
+}
+
+func (rf *Raft) applyMsg(newCommitIndex int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.isLeader && rf.commitIndex < newCommitIndex {
+		rf.commitIndex = newCommitIndex
+		command := rf.logs[rf.commitIndex].Command
+
+		go func() {
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				CommandIndex: newCommitIndex,
+				Command:      command,
+			}
+		}()
+	}
+}
+
 func (rf *Raft) heartBeat() {
 	subTracer := rf.tracer.WithField("Term", rf.currentTerm)
 	subTracer.Debug("start heart beat")
@@ -272,23 +323,42 @@ func (rf *Raft) heartBeat() {
 	rf.leaderAppendEntryCh = make(chan struct{})
 	rf.mu.Unlock()
 
-	subTracer = subTracer.WithField("role", "replicator")
+	subTracer = rf.tracer.WithField("role", "replicator")
+	index := make(chan commit)
 
 	for idx := 0; idx < len(rf.peers); idx++ {
 		if idx == rf.me {
 			continue
 		}
 		replicator := &Replicator{
-			me:     rf.me,
-			i:      idx,
-			peer:   rf.peers[idx],
-			raft:   rf,
-			logs:   logs,
-			tracer: subTracer.WithField("peer", idx),
+			me:              rf.me,
+			i:               idx,
+			peer:            rf.peers[idx],
+			raft:            rf,
+			logs:            logs,
+			tracer:          subTracer.WithField("peer", idx),
+			reportSendIndex: index,
 		}
 
 		go replicator.start(rf.leaderAppendEntryCh)
 	}
+
+	go func() {
+		committedIndex := make([]int, 0, len(rf.peers))
+		for i := 0; i < len(rf.peers); i++ {
+			committedIndex = append(committedIndex, -1)
+		}
+		for {
+			select {
+			case <-rf.leaderAppendEntryCh:
+				return
+			case c := <-index:
+				committedIndex[c.peer] = c.index
+				newCommitIndex := rf.updateCommittedIndex(committedIndex)
+				go rf.applyMsg(newCommitIndex)
+			}
+		}
+	}()
 }
 
 type AppendEntriesRequest struct {
@@ -336,10 +406,26 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 
 	if args.PreLogIndex < 0 {
 		reply.Success = true
-		rf.logs = rf.logs[:0]
+		rf.logs = append(rf.logs[:0], args.Entries...)
 	} else if args.PreLogIndex < len(rf.logs) && rf.logs[args.PreLogIndex].Term == args.PreLogTerm {
 		rf.logs = append(rf.logs[:args.PreLogIndex+1], args.Entries...)
 		reply.Success = true
+	}
+
+	newCommitted := args.LeaderCommit
+	if newCommitted > len(rf.logs)-1 {
+		newCommitted = len(rf.logs) - 1
+	}
+
+	if newCommitted > rf.commitIndex {
+		rf.commitIndex = newCommitted
+		go func() {
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				CommandIndex: rf.commitIndex,
+				Command:      rf.logs[rf.commitIndex].Command,
+			}
+		}()
 	}
 	return
 }
@@ -357,13 +443,22 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 // Term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
 	// Your code here (2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
-	return index, term, isLeader
+	if !rf.isLeader {
+		return -1, -1, rf.isLeader
+	}
+
+	rf.tracer.Debugf("receive a message, command=%#v", command)
+
+	rf.logs = append(rf.logs, Log{
+		Term:    rf.currentTerm,
+		Command: command,
+	})
+
+	return len(rf.logs) - 1, rf.currentTerm, rf.isLeader
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -393,6 +488,8 @@ func (rf *Raft) ticker() {
 	for rf.killed() == false {
 		// Your code here (2A)
 		// Check if a leader election should be started.
+		rf.tracer.Debugf("raft status: logs=%d, committed=%d, term=%d",
+			len(rf.logs), rf.commitIndex, rf.currentTerm)
 		select {
 		case <-timer.C:
 			go rf.handleTimeout()
@@ -524,10 +621,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		electionTimeout: genElectionTimeout(),
 	}
 
+	rf.commitIndex = -1
+	rf.lastApplied = -1
 	rf.config = cfg
 	rf.voteFor = -1
 	rf.tracer = logrus.WithField("id", me)
 	rf.resetTimerCh = make(chan struct{})
+	rf.applyCh = applyCh
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

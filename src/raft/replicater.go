@@ -16,7 +16,8 @@ type Replicator struct {
 	nextIndex int
 	logs      []Log
 
-	stopped chan struct{}
+	stopped         chan struct{}
+	reportSendIndex chan commit
 }
 
 // init nextIndex = len(rf.logs) - 1 => try to append the last log
@@ -52,6 +53,7 @@ func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
 		args.Entries = rep.logs[rep.nextIndex : rep.nextIndex+1]
 		return args, true
 	}
+
 	return args, false
 }
 
@@ -70,9 +72,24 @@ func (rep *Replicator) update() (stopOnLeaderChange bool) {
 		rep.tracer.Debugf("try to append %d", args.PreLogIndex+1)
 
 		var reply AppendEntriesReply
-		if ok := rep.peer.Call("Raft.AppendEntries", args, &reply); !ok {
-			time.Sleep(rep.raft.config.electionTimeout / 4)
-			continue
+		ok := false
+		ch := make(chan struct{}, 1)
+		timer := time.NewTimer(rep.raft.config.electionTimeout)
+
+		go func() {
+			defer func() { ch <- struct{}{}; close(ch) }()
+			ok = rep.peer.Call("Raft.AppendEntries", args, &reply)
+		}()
+
+		select {
+		case <-ch:
+		case <-timer.C:
+		}
+
+		if !ok {
+			rep.tracer.Debugf("peer disconnected")
+			stopOnLeaderChange = false
+			return
 		}
 
 		rep.tracer.Debugf("got reply %#v", reply)
@@ -84,6 +101,15 @@ func (rep *Replicator) update() (stopOnLeaderChange bool) {
 		}
 
 		if reply.Success {
+			go func() {
+				select {
+				case <-rep.stopped:
+				case rep.reportSendIndex <- commit{
+					peer:  rep.i,
+					index: args.PreLogIndex + 1,
+				}:
+				}
+			}()
 			rep.nextIndex++
 		} else {
 			rep.nextIndex--
@@ -106,6 +132,9 @@ func (rep *Replicator) start(stop chan struct{}) {
 	}()
 
 	rep.nextIndex = len(rep.logs) - 1
+	if rep.nextIndex < 0 {
+		rep.nextIndex = 0
+	}
 	rep.stopped = stop
 
 	rep.tracer.Debugf("replicator start work, next index=%d", rep.nextIndex)
@@ -114,7 +143,7 @@ func (rep *Replicator) start(stop chan struct{}) {
 		return
 	}
 
-	interval := rep.raft.config.electionTimeout / 4
+	interval := time.Millisecond * 100
 	timer := time.NewTimer(interval)
 
 	for {
