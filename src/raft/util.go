@@ -20,11 +20,10 @@ func enableDebug() {
 	logrus.SetLevel(logrus.DebugLevel)
 }
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
+func DPrintf(format string, a ...interface{}) {
 	if Debug {
 		print("\n===================================================\n")
 		fmt.Printf(format, a...)
 		print("\n===================================================\n")
 	}
-	return
 }

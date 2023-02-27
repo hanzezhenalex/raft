@@ -37,6 +37,10 @@ func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
 		LeaderCommit: commitIndex,
 	}
 
+	if rep.nextIndex < 0 { // if reply false in AppendEntries
+		rep.nextIndex = 0
+	}
+
 	// fill PreLogIndex
 	args.PreLogIndex = rep.nextIndex - 1
 
@@ -92,7 +96,7 @@ func (rep *Replicator) update() (stopOnLeaderChange bool) {
 			return
 		}
 
-		rep.tracer.Debugf("got reply %#v", reply)
+		rep.tracer.Debugf("got reply reply=%#v, index=%d", reply, args.PreLogIndex)
 
 		if !hasEntryToAppend {
 			rep.tracer.Debug("has no new entry, stop update")
@@ -104,6 +108,8 @@ func (rep *Replicator) update() (stopOnLeaderChange bool) {
 			go func() {
 				select {
 				case <-rep.stopped:
+					stopOnLeaderChange = true
+					return
 				case rep.reportSendIndex <- commit{
 					peer:  rep.i,
 					index: args.PreLogIndex + 1,

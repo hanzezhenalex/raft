@@ -139,7 +139,7 @@ func TestBasicAgree2B(t *testing.T) {
 	cfg.begin("Test (2B): basic agreement")
 
 	iters := 3
-	for index := 1; index < iters+1; index++ {
+	for index := 0; index < iters+1; index++ {
 		nd, _ := cfg.nCommitted(index)
 		if nd > 0 {
 			t.Fatalf("some have committed before Start()")
@@ -168,7 +168,7 @@ func TestRPCBytes2B(t *testing.T) {
 
 	iters := 10
 	var sent int64 = 0
-	for index := 2; index < iters+2; index++ {
+	for index := 1; index < iters+2; index++ {
 		cmd := randstring(5000)
 		xindex := cfg.one(cmd, servers, false)
 		if xindex != index {
@@ -218,7 +218,7 @@ func TestFollowerFailure2B(t *testing.T) {
 	if ok != true {
 		t.Fatalf("leader rejected Start()")
 	}
-	if index != 4 {
+	if index != 3 {
 		t.Fatalf("expected index 4, got %v", index)
 	}
 
@@ -245,6 +245,7 @@ func TestLeaderFailure2B(t *testing.T) {
 
 	// disconnect the first leader.
 	leader1 := cfg.checkOneLeader()
+	DPrintf("disconnect leader - leader=%d", leader1)
 	cfg.disconnect(leader1)
 
 	// the remaining followers should elect
@@ -255,6 +256,7 @@ func TestLeaderFailure2B(t *testing.T) {
 
 	// disconnect the new leader.
 	leader2 := cfg.checkOneLeader()
+	DPrintf("disconnect leader - leader=%d", leader2)
 	cfg.disconnect(leader2)
 
 	// submit a command to each server.
@@ -316,7 +318,7 @@ func TestFailNoAgree2B(t *testing.T) {
 
 	cfg.begin("Test (2B): no agreement if too many followers disconnect")
 
-	cfg.one(10, servers, false)
+	cfg.one(10, servers, false) // 1
 
 	// 3 of 5 followers disconnect
 	leader := cfg.checkOneLeader()
@@ -325,11 +327,11 @@ func TestFailNoAgree2B(t *testing.T) {
 	cfg.disconnect((leader + 2) % servers)
 	cfg.disconnect((leader + 3) % servers)
 
-	index, _, ok := cfg.rafts[leader].Start(20)
+	index, _, ok := cfg.rafts[leader].Start(20) // should not commit
 	if ok != true {
 		t.Fatalf("leader rejected Start()")
 	}
-	if index != 2 {
+	if index != 1 {
 		t.Fatalf("expected index 2, got %v", index)
 	}
 
@@ -349,11 +351,11 @@ func TestFailNoAgree2B(t *testing.T) {
 	// the disconnected majority may have chosen a leader from
 	// among their own ranks, forgetting index 2.
 	leader2 := cfg.checkOneLeader()
-	index2, _, ok2 := cfg.rafts[leader2].Start(30)
+	index2, _, ok2 := cfg.rafts[leader2].Start(30) // 2
 	if ok2 == false {
 		t.Fatalf("leader2 rejected Start()")
 	}
-	if index2 < 2 || index2 > 3 {
+	if index2 < 1 || index2 > 2 {
 		t.Fatalf("unexpected index %v", index2)
 	}
 
