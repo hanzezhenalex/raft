@@ -2,16 +2,28 @@ package raft
 
 import (
 	"fmt"
+	"github.com/sirupsen/logrus"
 )
 
 // Debugging
-const Debug = true
+var Debug bool
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
+func init() {
+	Debug = false
+	logrus.SetLevel(logrus.FatalLevel)
+
+	enableDebug()
+}
+
+func enableDebug() {
+	Debug = true
+	logrus.SetLevel(logrus.DebugLevel)
+}
+
+func DPrintf(format string, a ...interface{}) {
 	if Debug {
 		print("\n===================================================\n")
 		fmt.Printf(format, a...)
 		print("\n===================================================\n")
 	}
-	return
 }
