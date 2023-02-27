@@ -568,6 +568,8 @@ func (rf *Raft) fillRequestVotesArgs() (int, RequestVoteArgs) {
 	return rf.electionCnt, args
 }
 
+var noOpCommand = "no-op"
+
 func (rf *Raft) election() {
 	currentElectionCnt, args := rf.fillRequestVotesArgs()
 
@@ -621,10 +623,14 @@ func (rf *Raft) election() {
 				for idx := 0; idx < len(rf.nextIndex); idx++ {
 					rf.nextIndex[idx] = len(rf.logs)
 				}
+				rf.logs = append(rf.logs, Log{
+					Term:    rf.currentTerm,
+					Command: noOpCommand,
+				})
+				go rf.heartBeat()
 			}
 			rf.mu.Unlock()
 			rf.resetTimer()
-			go rf.heartBeat()
 			return
 		}
 	}

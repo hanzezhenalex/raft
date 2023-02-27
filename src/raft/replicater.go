@@ -78,7 +78,7 @@ func (rep *Replicator) update() (stopOnLeaderChange bool) {
 
 		go func() {
 			defer func() { ch <- struct{}{}; close(ch) }()
-			ok = rep.peer.Call("Raft.AppendEntries", args, &reply)
+			ok = rep.peer.Call("Raft.AppendEntries", args, &reply) // may timeout
 		}()
 
 		select {
