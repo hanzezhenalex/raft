@@ -707,33 +707,52 @@ func TestPersist12C(t *testing.T) {
 
 	cfg.begin("Test (2C): basic persistence")
 
+	DPrintf("send on message, cmd=11")
 	cfg.one(11, servers, true)
 
 	// crash and re-start all
 	for i := 0; i < servers; i++ {
+		DPrintf("restart %d", i)
 		cfg.start1(i, cfg.applier)
 	}
 	for i := 0; i < servers; i++ {
+		DPrintf("disconnect %d", i)
 		cfg.disconnect(i)
+		DPrintf("connect %d", i)
 		cfg.connect(i)
 	}
 
+	DPrintf("send on message, cmd=12")
 	cfg.one(12, servers, true)
 
 	leader1 := cfg.checkOneLeader()
+	DPrintf("disconnect leader, id = %d", leader1)
 	cfg.disconnect(leader1)
+
+	DPrintf("restart leader, id = %d", leader1)
 	cfg.start1(leader1, cfg.applier)
+
+	DPrintf("reconnect leader, id = %d", leader1)
 	cfg.connect(leader1)
 
+	DPrintf("send on message, cmd=13")
 	cfg.one(13, servers, true)
 
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
+	DPrintf("disconnect leader, id = %d", leader2)
+
+	DPrintf("send on message, cmd=14")
 	cfg.one(14, servers-1, true)
+
+	DPrintf("restart leader, id = %d", leader2)
 	cfg.start1(leader2, cfg.applier)
+
+	DPrintf("reconnect leader, id = %d", leader2)
 	cfg.connect(leader2)
 
-	cfg.wait(4, servers, -1) // wait for leader2 to join before killing i3
+
+	cfg.wait(3, servers, -1) // wait for leader2 to join before killing i3
 
 	i3 := (cfg.checkOneLeader() + 1) % servers
 	cfg.disconnect(i3)
@@ -812,8 +831,10 @@ func TestPersist32C(t *testing.T) {
 	cfg.start1((leader+0)%servers, cfg.applier)
 	cfg.connect((leader + 0) % servers)
 
+	DPrintf("send on message, cmd=103")
 	cfg.one(103, 2, true)
 
+	DPrintf("reconnect, id=%d", (leader+1)%servers)
 	cfg.start1((leader+1)%servers, cfg.applier)
 	cfg.connect((leader + 1) % servers)
 

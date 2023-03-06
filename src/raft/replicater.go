@@ -126,6 +126,7 @@ func (rep *Replicator) update() (stopOnLeaderChange bool) {
 			rep.raft.mu.Lock()
 			if reply.Term > rep.raft.currentTerm {
 				rep.raft.currentTerm = reply.Term
+				rep.raft.persist()
 			}
 			rep.raft.mu.Unlock()
 		}
