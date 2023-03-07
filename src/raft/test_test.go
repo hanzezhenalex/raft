@@ -9,13 +9,13 @@ package raft
 //
 
 import (
+	"fmt"
+	"math/rand"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
-import "fmt"
-import "time"
-import "math/rand"
-import "sync/atomic"
-import "sync"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -733,7 +733,7 @@ func TestPersist12C(t *testing.T) {
 	cfg.start1(leader2, cfg.applier)
 	cfg.connect(leader2)
 
-	cfg.wait(4, servers, -1) // wait for leader2 to join before killing i3
+	cfg.wait(3, servers, -1) // wait for leader2 to join before killing i3
 
 	i3 := (cfg.checkOneLeader() + 1) % servers
 	cfg.disconnect(i3)

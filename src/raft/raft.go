@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 
 	"github.com/sirupsen/logrus"
@@ -116,13 +118,17 @@ func (rf *Raft) GetState() (int, bool) {
 // (or nil if there's not yet a snapshot).
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	// caller should have lock
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	e.Encode(rf.currentTerm) // assume no error
+	e.Encode(rf.voteFor)
+	e.Encode(rf.logs)
+
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 // restore previously persisted state.
@@ -130,19 +136,13 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	d.Decode(&rf.currentTerm)
+	d.Decode(&rf.voteFor)
+	d.Decode(&rf.logs)
 }
 
 // the service says it has created a snapshot that has
@@ -150,7 +150,7 @@ func (rf *Raft) readPersist(data []byte) {
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
+	// Your code here (2D).)
 
 }
 
@@ -176,7 +176,14 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	oldTerm := rf.currentTerm
+
+	defer func() {
+		if oldTerm != rf.currentTerm {
+			rf.persist()
+		}
+		rf.mu.Unlock()
+	}()
 
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
@@ -425,6 +432,9 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	defer func() {
 		if args.Term > rf.currentTerm {
 			rf.currentTerm = args.Term
+			rf.persist()
+		} else if reply.Success && len(args.Entries) > 0 {
+			rf.persist()
 		}
 		rf.mu.Unlock()
 	}()
@@ -557,7 +567,10 @@ func (rf *Raft) resetTimer() {
 
 func (rf *Raft) fillRequestVotesArgs() (int, RequestVoteArgs) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.persist()
+		rf.mu.Unlock()
+	}()
 
 	rf.voteFor = rf.me
 	rf.electionCnt++
@@ -617,6 +630,7 @@ func (rf *Raft) election() {
 
 					if rf.currentTerm < reply.Term {
 						rf.currentTerm = reply.Term
+						rf.persist()
 					}
 				}
 			}
