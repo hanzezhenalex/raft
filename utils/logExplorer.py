@@ -21,10 +21,14 @@ class RoleLogEntry:
         self.time = time
 
     def gen(self, max_id: int):
+        tdClass = 'td-id'
+        if self.log.startswith(" commit:"):
+            tdClass = 'td-commit'
+
         body = ""
         for i in range(max_id+1):
             if self.id == i:
-                body += "<td class='td-id'>{}</td>".format(self.log)
+                body += "<td class='{}'>{}</td>".format(tdClass, self.log)
             else:
                 body += "<td class='td-id'></td>"
         return RoleLogEntry.template.format(self.time, body)
@@ -73,7 +77,8 @@ class Reader:
 
 def style():
     ret = r".tableStyle{width: 100%;word-wrap:bread-word;word-break:break-all;table-layout:fixed;}"
-    ret += r" .td-id {font-size:20px;height: auto;border: 1px solid #1f8cfa;}</style>"
+    ret += r" .td-id {font-size:20px;height: auto;border: 1px solid #1f8cfa;}"
+    ret += r" .td-commit {font-size:20px;height: auto;border: 1px solid #1f8cfa; background-color: rgba(165, 42, 42, 0.3);}"
     return "<style>{}<\style>".format(ret)
 
 
