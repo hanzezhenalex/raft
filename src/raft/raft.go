@@ -86,10 +86,11 @@ type Raft struct {
 	// Persistent state on all server
 	currentTerm int
 	voteFor     int
-	logs        []Log
+	logs        Logs
 	// Volatile state on all servers
-	commitIndex int
-	lastApplied int
+	commitIndex        int
+	persistCommitIndex int
+	lastApplied        int
 	// Volatile state on leaders
 	isLeader   bool
 	matchIndex int
@@ -99,6 +100,8 @@ type Log struct {
 	Term    int
 	Command interface{}
 }
+
+type Logs []Log
 
 // return currentTerm and whether this server
 // believes it is the leader.
@@ -125,10 +128,13 @@ func (rf *Raft) persist() {
 
 	e.Encode(rf.currentTerm) // assume no error
 	e.Encode(rf.voteFor)
+	e.Encode(rf.commitIndex)
 	e.Encode(rf.logs)
 
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
+
+	rf.printStatus("persist")
 }
 
 // restore previously persisted state.
@@ -142,7 +148,10 @@ func (rf *Raft) readPersist(data []byte) {
 
 	d.Decode(&rf.currentTerm)
 	d.Decode(&rf.voteFor)
+	d.Decode(&rf.persistCommitIndex)
 	d.Decode(&rf.logs)
+
+	rf.printStatus("recover")
 }
 
 // the service says it has created a snapshot that has
@@ -199,24 +208,27 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) &&
-		rf.canBeLeader(args) {
+		rf.canBeLeader(args.LastLogTerm, args.LastLogIndex) {
 		rf.voteFor = args.CandidateId
 		rf.isLeader = false
-
+		if rf.leaderAppendEntryCh != nil {
+			close(rf.leaderAppendEntryCh)
+			rf.leaderAppendEntryCh = nil
+		}
 		reply.VoteGranted = true
 	}
 }
 
 // with lock
-func (rf *Raft) canBeLeader(args RequestVoteArgs) bool {
+func (rf *Raft) canBeLeader(peerLastLogTerm int, peerLastLogIndex int) bool {
 	lastEntryTerm := -1
 	if len(rf.logs) > 0 {
 		lastEntryTerm = rf.logs[len(rf.logs)-1].Term
 	}
-	if lastEntryTerm > args.LastLogTerm {
+	if lastEntryTerm > peerLastLogTerm {
 		return false
-	} else if lastEntryTerm == args.LastLogTerm {
-		return args.LastLogIndex >= len(rf.logs)-1
+	} else if lastEntryTerm == peerLastLogTerm {
+		return peerLastLogIndex >= len(rf.logs)-1
 	} else {
 		return true
 	}
@@ -296,6 +308,7 @@ func (rf *Raft) applyMsg(newCommitIndex int) {
 
 		old := rf.commitIndex
 		rf.commitIndex = newCommitIndex
+		rf.persist()
 
 		go func() {
 			rf.tracer.Debugf("try to send commits, old=%d, end=%d", old+1, newCommitIndex)
@@ -307,8 +320,13 @@ func (rf *Raft) applyMsg(newCommitIndex int) {
 	}
 }
 
+func (rf *Raft) printStatus(prefix string) {
+	status := fmt.Sprintf("term=%d, logs=%d, dcommitIndex=%d, lastApplied=%d, leader=%t",
+		rf.currentTerm, len(rf.logs), rf.commitIndex, rf.lastApplied, rf.isLeader)
+	rf.tracer.Debugf("[%s]raft status: %s", prefix, status)
+}
+
 func (rf *Raft) handleApplyMsg() {
-	rf.commitCh = make(chan commits)
 	lastCommitted := -1
 	var newCommits []commits
 	for c := range rf.commitCh {
@@ -415,17 +433,18 @@ type AppendEntriesRequest struct {
 	LeaderId     int
 	PreLogIndex  int
 	PreLogTerm   int
-	Entries      []Log
+	Entries      Logs
 	LeaderCommit int
 }
 
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+	Granted bool
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
-	rf.tracer.Debugf("receive AppendEntries from %d, args=%v", args.LeaderId, args)
+	rf.tracer.Debugf("receive AppendEntries from %d, args=%#v", args.LeaderId, args)
 
 	rf.mu.Lock()
 
@@ -443,6 +462,8 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 		args.LeaderCommit < rf.commitIndex {
 		reply.Success = false
 		reply.Term = rf.currentTerm
+		reply.Granted = false
+		rf.tracer.Debugf("reject AppendEntreis, reason=term, current=%d, args=%d", rf.currentTerm, args.Term)
 		return
 	}
 
@@ -458,6 +479,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 
 	reply.Success = false
 	reply.Term = rf.currentTerm
+	reply.Granted = true
 
 	if args.PreLogIndex < 0 {
 		reply.Success = true
@@ -487,7 +509,10 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.persist()
+		rf.mu.Unlock()
+	}()
 
 	if !rf.isLeader {
 		return -1, -1, rf.isLeader
@@ -522,6 +547,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+
 }
 
 func (rf *Raft) killed() bool {
@@ -537,8 +563,7 @@ func (rf *Raft) ticker() {
 	for rf.killed() == false {
 		// Your code here (2A)
 		// Check if a leader election should be started.
-		rf.tracer.Debugf("raft status: logs=%d, committed=%d, term=%d, leader=%t",
-			len(rf.logs), rf.commitIndex, rf.currentTerm, rf.isLeader)
+		rf.printStatus("timeout")
 		select {
 		case <-timer.C:
 			go rf.handleTimeout()
@@ -546,6 +571,14 @@ func (rf *Raft) ticker() {
 			rf.tracer.Debug("reset timer")
 		}
 		timer.Reset(rf.config.electionTimeout)
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.leaderAppendEntryCh != nil {
+		close(rf.leaderAppendEntryCh)
+		rf.leaderAppendEntryCh = nil
 	}
 }
 
@@ -621,7 +654,7 @@ func (rf *Raft) election() {
 			var reply RequestVoteReply
 			if ok := rf.sendRequestVote(idx, args, &reply); ok {
 				if reply.VoteGranted == true {
-					subTracer.Debug("election granted")
+					subTracer.Debug("election Granted")
 					replyCh <- struct{}{}
 				} else {
 					subTracer.Debug("grant forbidden")
@@ -694,12 +727,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.tracer = logrus.WithField("id", me)
 	rf.resetTimerCh = make(chan struct{})
 	rf.applyCh = applyCh
+	rf.commitCh = make(chan commits)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+	go rf.applyMsg(rf.persistCommitIndex)
 	go rf.handleApplyMsg()
 	return rf
 }

@@ -129,6 +129,10 @@ func (rep *Replicator) update() (stopOnLeaderChange bool) {
 				rep.raft.currentTerm = reply.Term
 				rep.raft.persist()
 			}
+			if !rep.raft.isLeader {
+				stopOnLeaderChange = true
+				return
+			}
 			rep.raft.mu.Unlock()
 		}
 	}
@@ -157,6 +161,7 @@ func (rep *Replicator) start(stop chan struct{}) {
 	for {
 		select {
 		case <-timer.C:
+			rep.raft.printStatus("replicator")
 			if stopOnLeaderChange := rep.update(); stopOnLeaderChange {
 				return
 			}

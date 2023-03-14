@@ -802,21 +802,32 @@ func TestPersist32C(t *testing.T) {
 	cfg.one(101, 3, true)
 
 	leader := cfg.checkOneLeader()
+
+	DPrintf("disconnect: %d", (leader+2)%servers)
 	cfg.disconnect((leader + 2) % servers)
 
+	DPrintf("send message, command=102")
 	cfg.one(102, 2, true)
 
+	DPrintf("crash: %d, %d", (leader+0)%servers, (leader+1)%servers)
 	cfg.crash1((leader + 0) % servers)
 	cfg.crash1((leader + 1) % servers)
+
+	DPrintf("reconnect, id=%d", (leader+2)%servers)
 	cfg.connect((leader + 2) % servers)
+
+	DPrintf("restart, id=%d", (leader+0)%servers)
 	cfg.start1((leader+0)%servers, cfg.applier)
 	cfg.connect((leader + 0) % servers)
 
+	DPrintf("send message, command=103")
 	cfg.one(103, 2, true)
 
+	DPrintf("restart, id=%d", (leader+1)%servers)
 	cfg.start1((leader+1)%servers, cfg.applier)
 	cfg.connect((leader + 1) % servers)
 
+	DPrintf("send message, command=104")
 	cfg.one(104, servers, true)
 
 	cfg.end()
@@ -965,7 +976,20 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
-	cfg.one(rand.Int()%10000, servers, true)
+	cfg.setlongreordering(false)
+	timer := time.NewTimer(time.Minute * 5)
+	ch := make(chan struct{})
+
+	go func() {
+		cfg.one(rand.Int()%10000, servers, true)
+		ch <- struct{}{}
+	}()
+
+	select {
+	case <-timer.C:
+		panic("timeout")
+	case <-ch:
+	}
 
 	cfg.end()
 }

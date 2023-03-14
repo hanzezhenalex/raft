@@ -12,7 +12,7 @@ func init() {
 	Debug = false
 	logrus.SetLevel(logrus.FatalLevel)
 
-	enableDebug()
+	//enableDebug()
 }
 
 func enableDebug() {
@@ -22,8 +22,6 @@ func enableDebug() {
 
 func DPrintf(format string, a ...interface{}) {
 	if Debug {
-		print("\n===================================================\n")
-		fmt.Printf(format, a...)
-		print("\n===================================================\n")
+		fmt.Printf("===================================   "+format+"\r\n", a...)
 	}
 }
