@@ -64,19 +64,19 @@ type commits struct {
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
-	mu                  sync.RWMutex        // Lock to protect shared access to this peer's state
-	peers               []*labrpc.ClientEnd // RPC end points of all peers
-	persister           *Persister          // Object to hold this peer's persisted state
-	me                  int                 // this peer's index into peers[]
-	dead                int32               // set by Kill()
-	resetTimerCh        chan struct{}
-	electionCnt         int
-	leaderAppendEntryCh chan struct{}
-	commitCh            chan commits
-	applyCh             chan ApplyMsg
+	mu           sync.RWMutex        // Lock to protect shared access to this peer's state
+	peers        []*labrpc.ClientEnd // RPC end points of all peers
+	persister    *Persister          // Object to hold this peer's persisted state
+	me           int                 // this peer's index into peers[]
+	dead         int32               // set by Kill()
+	resetTimerCh chan struct{}
+	electionCnt  int
+	commitCh     chan commits
+	applyCh      chan ApplyMsg
 
-	tracer *logrus.Entry
-	config Config
+	tracer             *logrus.Entry
+	config             Config
+	replicationService *ReplicationService
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -194,7 +194,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) &&
 		rf.canBeLeader(args) {
 		rf.voteFor = args.CandidateId
-		rf.isLeader = false
+		rf.stopLeader()
 
 		reply.VoteGranted = true
 	}
@@ -245,40 +245,6 @@ func (rf *Raft) canBeLeader(args RequestVoteArgs) bool {
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
-}
-
-type commit struct {
-	peer  int
-	index int
-}
-
-func (rf *Raft) updateCommittedIndex(committedIndex []int) int {
-	type pair struct {
-		i         int
-		committed int
-	}
-
-	pairs := make([]pair, 0, len(committedIndex)-1)
-	for i := 0; i < len(committedIndex); i++ {
-		if i == rf.me {
-			continue
-		}
-		pairs = append(pairs, pair{
-			i:         i,
-			committed: committedIndex[i],
-		})
-	}
-
-	sort.Slice(pairs, func(i, j int) bool {
-		return pairs[i].committed < pairs[j].committed
-	})
-
-	mid := len(pairs) / 2
-	newCommitted := pairs[mid].committed
-
-	rf.tracer.Debugf("committed=%d, nextIndex=%#v, new committed=%d", rf.commitIndex, pairs, newCommitted)
-
-	return newCommitted
 }
 
 func (rf *Raft) applyMsg(newCommitIndex int) {
@@ -345,64 +311,6 @@ func (rf *Raft) handleApplyMsg() {
 	}
 }
 
-func (rf *Raft) heartBeat() {
-	subTracer := rf.tracer.WithField("Term", rf.currentTerm)
-	subTracer.Debug("start heart beat")
-
-	rf.mu.Lock()
-	logs := rf.logs
-	if rf.leaderAppendEntryCh != nil {
-		close(rf.leaderAppendEntryCh)
-	}
-	rf.leaderAppendEntryCh = make(chan struct{})
-	rf.mu.Unlock()
-
-	subTracer = rf.tracer.WithField("role", "replicator")
-	index := make(chan commit)
-
-	for idx := 0; idx < len(rf.peers); idx++ {
-		if idx == rf.me {
-			continue
-		}
-		replicator := &Replicator{
-			me:              rf.me,
-			i:               idx,
-			peer:            rf.peers[idx],
-			raft:            rf,
-			logs:            logs,
-			tracer:          subTracer.WithField("peer", idx),
-			reportSendIndex: index,
-		}
-
-		go replicator.start(rf.leaderAppendEntryCh)
-	}
-
-	go func() {
-		committedIndex := make([]int, 0, len(rf.peers))
-		for i := 0; i < len(rf.peers); i++ {
-			committedIndex = append(committedIndex, -1)
-		}
-		for {
-			select {
-			case <-rf.leaderAppendEntryCh:
-				return
-			case c := <-index:
-				committedIndex[c.peer] = c.index
-				newCommitIndex := rf.updateCommittedIndex(committedIndex)
-				go func() {
-					rf.mu.Lock()
-					defer rf.mu.Unlock()
-
-					if !rf.isLeader {
-						return
-					}
-					rf.applyMsg(newCommitIndex)
-				}()
-			}
-		}
-	}()
-}
-
 type AppendEntriesRequest struct {
 	Term         int
 	LeaderId     int
@@ -439,11 +347,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	rf.resetTimer()
 	rf.currentTerm = args.Term
 
-	rf.isLeader = false
-	if rf.leaderAppendEntryCh != nil {
-		close(rf.leaderAppendEntryCh)
-		rf.leaderAppendEntryCh = nil
-	}
+	rf.stopLeader()
 	rf.voteFor = -1
 
 	reply.Success = false
@@ -648,8 +552,24 @@ func (rf *Raft) transferToLeader() {
 		Term:    rf.currentTerm,
 		Command: noOpCommand,
 	})
-	go rf.heartBeat()
+
+	go func() {
+		subTracer := rf.tracer.WithField("Term", rf.currentTerm)
+		subTracer.Debug("change to leader, start heart beat")
+
+		rf.replicationService = NewReplicationService(rf)
+	}()
+
 	rf.resetTimer()
+}
+
+func (rf *Raft) stopLeader() {
+	rf.isLeader = false
+
+	if rf.replicationService != nil {
+		go rf.replicationService.stop()
+		rf.replicationService = nil
+	}
 }
 
 // the service or tester wants to create a Raft server. the ports
