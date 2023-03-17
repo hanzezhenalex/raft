@@ -8,7 +8,7 @@ package raft
 // rf = Make(...)
 //   create a new Raft server.
 // rf.Start(command interface{}) (index, Term, isleader)
-//   start agreement on a new log entry
+//   offset agreement on a new log entry
 // rf.GetState() (Term, isLeader)
 //   ask a Raft for its current Term, and whether it thinks it is leader
 // ApplyMsg
@@ -20,6 +20,7 @@ package raft
 import (
 	"fmt"
 	"math/rand"
+	"reflect"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -155,7 +156,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 }
 
 // example RequestVote RPC arguments structure.
-// field names must start with capital letters!
+// field names must offset with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 	Term         int
@@ -165,7 +166,7 @@ type RequestVoteArgs struct {
 }
 
 // example RequestVote RPC reply structure.
-// field names must start with capital letters!
+// field names must offset with capital letters!
 type RequestVoteReply struct {
 	// Your data here (2A).
 	Term        int
@@ -314,61 +315,76 @@ func (rf *Raft) handleApplyMsg() {
 type AppendEntriesRequest struct {
 	Term         int
 	LeaderId     int
-	PreLogIndex  int
-	PreLogTerm   int
+	offset       int
 	Entries      []Log
 	LeaderCommit int
+
+	PreLogIndex int
+	PreLogTerm  int
 }
 
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+	Next    int
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
 	rf.tracer.Debugf("receive AppendEntries from %d, args=%v", args.LeaderId, args)
 
 	rf.mu.Lock()
-
 	defer func() {
 		if args.Term > rf.currentTerm {
 			rf.currentTerm = args.Term
 		}
 		rf.mu.Unlock()
+		reply.Term = rf.currentTerm
 	}()
 
-	if args.Term < rf.currentTerm ||
-		args.LeaderCommit < rf.commitIndex {
-		reply.Success = false
-		reply.Term = rf.currentTerm
+	if args.Term < rf.currentTerm || args.LeaderCommit < rf.commitIndex {
 		return
 	}
 
 	rf.resetTimer()
-	rf.currentTerm = args.Term
-
 	rf.stopLeader()
 	rf.voteFor = -1
-
-	reply.Success = false
-	reply.Term = rf.currentTerm
-
-	if args.PreLogIndex < 0 {
-		reply.Success = true
-		rf.logs = append(rf.logs[:0], args.Entries...)
-	} else if args.PreLogIndex < len(rf.logs) && rf.logs[args.PreLogIndex].Term == args.PreLogTerm {
-		rf.logs = append(rf.logs[:args.PreLogIndex+1], args.Entries...)
-		reply.Success = true
-	}
+	rf.tryAppendEntries(args, reply)
 
 	if reply.Success {
 		rf.applyMsg(args.LeaderCommit)
 	}
 }
 
-// the service using Raft (e.g. a k/v server) wants to start
+func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
+	index := func(i int) int {
+		return args.offset + i
+	}
+
+	matched := false
+	i := 0 // the first index of log that doesn't match
+	for ; i < len(args.Entries) && index(i) < len(rf.logs); i++ {
+		myLog := rf.logs[index(i)]
+		leaderLog := args.Entries[i]
+		if !reflect.DeepEqual(myLog, leaderLog) {
+			break
+		}
+		matched = true
+	}
+
+	if matched || args.offset == 0 {
+		reply.Success = true
+		if i < len(args.Entries) { // in case args.Entries is empty
+			rf.logs = append(rf.logs[:index(i)], args.Entries[i:]...)
+		}
+		reply.Next = index(len(args.Entries))
+	} else {
+		reply.Next = max(args.offset-1, 0)
+	}
+}
+
+// the service using Raft (e.g. a k/v server) wants to offset
 // agreement on the next command to be appended to Raft's log. if this
-// server isn't the leader, returns false. otherwise start the
+// server isn't the leader, returns false. otherwise offset the
 // agreement and return immediately. there is no guarantee that this
 // command will ever be committed to the Raft log, since the leader
 // may fail or lose an election. even if the Raft instance has been killed,
@@ -426,7 +442,7 @@ func (rf *Raft) killed() bool {
 func (rf *Raft) ticker() {
 	timer := time.NewTimer(rf.config.electionTimeout)
 
-	rf.tracer.Debugf("raft start with election timeout = %s", rf.config.electionTimeout.String())
+	rf.tracer.Debugf("raft offset with election timeout = %s", rf.config.electionTimeout.String())
 
 	for rf.killed() == false {
 		// Your code here (2A)
@@ -450,7 +466,7 @@ func (rf *Raft) handleTimeout() {
 	if rf.isLeader {
 		rf.tracer.Debug("leader ignore the heartbeat, will be done by replicator")
 	} else {
-		rf.tracer.Debug("timeout, start election")
+		rf.tracer.Debug("timeout, offset election")
 		go rf.election()
 	}
 }
@@ -555,9 +571,9 @@ func (rf *Raft) transferToLeader() {
 
 	go func() {
 		subTracer := rf.tracer.WithField("Term", rf.currentTerm)
-		subTracer.Debug("change to leader, start heart beat")
+		subTracer.Debug("change to leader, offset heart beat")
 
-		rf.replicationService = NewReplicationService(rf)
+		rf.replicationService = NewReplicationService(rf, len(rf.logs)-1)
 	}()
 
 	rf.resetTimer()
@@ -579,7 +595,7 @@ func (rf *Raft) stopLeader() {
 // save its persistent state, and also initially holds the most
 // recent saved state, if any. applyCh is a channel on which the
 // tester or service expects Raft to send ApplyMsg messages.
-// Make() must return quickly, so it should start goroutines
+// Make() must return quickly, so it should offset goroutines
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
@@ -604,7 +620,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-	// start ticker goroutine to start elections
+	// offset ticker goroutine to offset elections
 	go rf.ticker()
 	go rf.handleApplyMsg()
 	return rf

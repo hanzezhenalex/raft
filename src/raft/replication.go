@@ -29,7 +29,7 @@ type ReplicationService struct {
 	mu      sync.Mutex
 }
 
-func NewReplicationService(raft *Raft) *ReplicationService {
+func NewReplicationService(raft *Raft, nextIndex int) *ReplicationService {
 	rs := &ReplicationService{
 		raft:           raft,
 		tracer:         raft.tracer.WithField("role", "replication service"),
@@ -48,8 +48,10 @@ func NewReplicationService(raft *Raft) *ReplicationService {
 		if idx == raft.me {
 			continue
 		}
-		rs.replicators = append(rs.replicators, NewReplicator(idx, raft.me, raft.peers[idx], raft,
-			subTracer.WithField("peer", idx), rs.commitCh, func() { rs.wg.Done() }))
+		rep := NewReplicator(idx, raft.me, raft.peers[idx], raft,
+			subTracer.WithField("peer", idx), rs.commitCh, func() { rs.wg.Done() }, nextIndex)
+		go rep.daemon()
+		rs.replicators = append(rs.replicators, rep)
 	}
 
 	go rs.daemon()
@@ -57,7 +59,7 @@ func NewReplicationService(raft *Raft) *ReplicationService {
 }
 
 func (rs *ReplicationService) daemon() {
-	rs.tracer.Debug("ReplicationService start working")
+	rs.tracer.Debug("ReplicationService offset working")
 
 	for peerCommit := range rs.commitCh {
 		rs.tracer.Debugf("peer %d last log index=%d", peerCommit.peer, peerCommit.index)
@@ -134,7 +136,9 @@ type Replicator struct {
 	raft   *Raft
 	tracer *logrus.Entry
 
-	status    replicatorStatus
+	status replicatorStatus
+	// matching:    next log entry to append
+	// replicating: next log entry try to match
 	nextIndex int
 	logs      []Log
 
@@ -143,7 +147,8 @@ type Replicator struct {
 	reportSendIndex chan received
 }
 
-func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus.Entry, reportSendIndex chan received, callback func()) *Replicator {
+func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus.Entry, reportSendIndex chan received,
+	callback func(), nextIndex int) *Replicator {
 	replicator := &Replicator{
 		me:              me,
 		i:               i,
@@ -154,12 +159,8 @@ func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus
 		stopped:         make(chan struct{}),
 		reportSendIndex: reportSendIndex,
 		callback:        callback,
+		nextIndex:       nextIndex,
 	}
-	replicator.nextIndex = len(replicator.logs) - 1
-	if replicator.nextIndex < 0 {
-		replicator.nextIndex = 0
-	}
-	go replicator.daemon()
 	return replicator
 }
 
@@ -177,32 +178,33 @@ func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
 		LeaderCommit: commitIndex,
 	}
 
-	if rep.nextIndex < 0 { // if reply false in AppendEntries
-		rep.nextIndex = 0
-	}
-
-	// fill PreLogIndex
-	args.PreLogIndex = rep.nextIndex - 1
-
-	// fill PreLogTerm
-	// set -1 if rf.logs is empty
-	if args.PreLogIndex < 0 {
-		args.PreLogTerm = -1
+	if rep.status == matching {
+		if rep.nextIndex < 0 {
+			rep.nextIndex = 0
+		}
+		start := rep.nextIndex - maxLogEntries + 1
+		if start < 0 {
+			start = 0
+		}
+		args.offset = start
+		args.Entries = rep.logs[start : rep.nextIndex+1]
 	} else {
-		args.PreLogTerm = rep.logs[args.PreLogIndex].Term
+		// in appending entries, need to append a matched entry first
+		args.offset = max(rep.nextIndex-1, 0)
+		end := args.offset + maxLogEntries
+		if end > len(rep.logs) {
+			end = len(rep.logs)
+		}
+		args.Entries = rep.logs[args.offset:end] // [ -> )
 	}
-
-	// return false if there is no nextIndex to append
-	if rep.nextIndex < len(rep.logs) && rep.nextIndex >= 0 {
-		args.Entries = rep.logs[rep.nextIndex : rep.nextIndex+1]
-		return args, true
+	if rep.nextIndex >= len(rep.logs) {
+		return args, false // no entry to append
 	}
-
-	return args, false
+	return args, true
 }
 
 func (rep *Replicator) update() {
-	rep.tracer.Debug("replicator start update")
+	rep.tracer.Debug("replicator offset update")
 
 	for {
 		select {
@@ -211,12 +213,9 @@ func (rep *Replicator) update() {
 		default:
 		}
 
+		// hasEntryToAppend == false means no entry to append
+		// but still need to send a heartbeat message
 		args, hasEntryToAppend := rep.fillAppendEntries()
-		if !hasEntryToAppend { // nothing to append, stop update
-			rep.tracer.Debug("has no new entry, stop update")
-			return
-		}
-
 		var (
 			reply AppendEntriesReply
 			ok    = false
@@ -228,12 +227,17 @@ func (rep *Replicator) update() {
 			ok = rep.peer.Call("Raft.AppendEntries", args, &reply) // may timeout
 		}, rep.raft.config.electionTimeout)
 
+		if !hasEntryToAppend { // nothing to append, stop update
+			rep.tracer.Debug("has no new entry, stop update")
+			return
+		}
+
 		if !ok { // timeout or network unavailable
 			rep.tracer.Debugf("peer disconnected")
 			return
 		}
 
-		rep.handleReply(&args, &reply)
+		rep.handleReply(args, &reply)
 	}
 }
 
@@ -247,13 +251,19 @@ func (rep *Replicator) commit(last int) {
 	}
 }
 
-func (rep *Replicator) handleReply(args *AppendEntriesRequest, reply *AppendEntriesReply) {
+func (rep *Replicator) handleReply(args AppendEntriesRequest, reply *AppendEntriesReply) {
 	rep.tracer.Debugf("got reply reply=%#v, index=%d", reply, args.PreLogIndex)
+	rep.nextIndex = reply.Next
+
 	if reply.Success {
-		go rep.commit(args.PreLogIndex + 1)
-		rep.nextIndex++
+		if rep.status == matching {
+			rep.status = replicating
+		}
+		go rep.commit(rep.nextIndex - 1)
 	} else {
-		rep.nextIndex--
+		if rep.status == replicating {
+			rep.status = matching
+		}
 	}
 
 	{
