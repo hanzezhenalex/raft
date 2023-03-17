@@ -709,7 +709,7 @@ func TestPersist12C(t *testing.T) {
 
 	cfg.one(11, servers, true)
 
-	// crash and re-offset all
+	// crash and re-Offset all
 	for i := 0; i < servers; i++ {
 		cfg.start1(i, cfg.applier)
 	}
@@ -827,7 +827,7 @@ func TestPersist32C(t *testing.T) {
 // log.  If there is a leader, that leader will fail quickly with a high
 // probability (perhaps without committing the command), or crash after a while
 // with low probability (most likey committing the command).  If the number of
-// alive servers isn't enough to form a majority, perhaps offset a new server.
+// alive servers isn't enough to form a majority, perhaps Offset a new server.
 // The leader in a new Term may try to finish replicating log entries that
 // haven't been committed yet.
 func TestFigure82C(t *testing.T) {

@@ -49,7 +49,7 @@ func TestReplicator_fillAppendEntries_matching(t *testing.T) {
 			args, hasEntryToAppend := rep.fillAppendEntries()
 
 			rq.True(hasEntryToAppend)
-			rq.Equal(c.start, args.offset)
+			rq.Equal(c.start, args.Offset)
 			rq.Equal(c.length, len(args.Entries))
 			rq.Equal(c.start, args.Entries[0].Term)
 		})
@@ -62,7 +62,7 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 	replicatingCases := []testCase{
 		{name: "1", start: 0, length: 1, logs: 1, nextIndex: 0, hasEntryToAppend: true},
 		{name: "half maxLogEntries", start: 0, length: maxLogEntries / 2, logs: maxLogEntries / 2, nextIndex: 0, hasEntryToAppend: true},
-		{name: "offset from 3", start: 3, length: maxLogEntries/2 - 3, logs: maxLogEntries / 2, nextIndex: 4, hasEntryToAppend: true},
+		{name: "Offset from 3", start: 3, length: maxLogEntries/2 - 3, logs: maxLogEntries / 2, nextIndex: 4, hasEntryToAppend: true},
 		{name: "more than maxLogEntries", start: 3, length: maxLogEntries, logs: maxLogEntries * 2, nextIndex: 4, hasEntryToAppend: true},
 		{name: "no entry to append", start: 0, length: 1, logs: 1, nextIndex: 1, hasEntryToAppend: false},
 	}
@@ -78,7 +78,7 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 			args, hasEntryToAppend := rep.fillAppendEntries()
 
 			rq.Equal(hasEntryToAppend, c.hasEntryToAppend)
-			rq.Equal(c.start, args.offset)
+			rq.Equal(c.start, args.Offset)
 			rq.Equal(c.length, len(args.Entries))
 			if c.length > 0 {
 				rq.Equal(c.start, args.Entries[0].Term)
@@ -99,9 +99,9 @@ func TestReplicator_handleReply_matching(t *testing.T) {
 	rq := require.New(t)
 
 	cases := []handleReplyTestCase{
-		{name: "not match", nextIndex: 20, start: 10, success: false, expectNextIndex: 9},
-		{name: "match", nextIndex: 20, start: 10, success: true, expectNextIndex: 13},
-		{name: "match", nextIndex: 20, start: 0, success: true, expectNextIndex: 0},
+		{name: "not match", start: 10, success: false, expectNextIndex: 9},
+		{name: "match", start: 10, success: true, expectNextIndex: 13},
+		{name: "match", start: 0, success: true, expectNextIndex: 0},
 	}
 
 	for _, c := range cases {
@@ -111,13 +111,12 @@ func TestReplicator_handleReply_matching(t *testing.T) {
 			rep := NewReplicator(1, 0, nil, raft, tracer, ch, func() {}, c.nextIndex)
 			defer rep.stop()
 
-			rep.handleReply(AppendEntriesRequest{offset: c.start}, &AppendEntriesReply{Success: c.success, Next: c.expectNextIndex})
+			rep.handleReply(AppendEntriesRequest{Offset: c.start}, &AppendEntriesReply{Success: c.success, Next: c.expectNextIndex})
 			rq.Equal(c.expectNextIndex, rep.nextIndex)
 
-			r := <-ch
-			rq.Equal(c.nextIndex, r.index)
-
 			if c.success == true {
+				r := <-ch
+				rq.Equal(c.expectNextIndex-1, r.index)
 				rq.Equal(replicating, rep.status)
 			} else {
 				rq.Equal(matching, rep.status)
@@ -143,7 +142,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			name: "init, both empty",
 			logs: 0,
 			args: AppendEntriesRequest{
-				offset:  0,
+				Offset:  0,
 				Entries: []Log{}},
 			expectedReply: AppendEntriesReply{
 				Success: true,
@@ -155,7 +154,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			name: "init, leader empty",
 			logs: 3,
 			args: AppendEntriesRequest{
-				offset:  0,
+				Offset:  0,
 				Entries: []Log{}},
 			expectedReply: AppendEntriesReply{
 				Success: true,
@@ -167,7 +166,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			name: "init",
 			logs: 0,
 			args: AppendEntriesRequest{
-				offset: 0,
+				Offset: 0,
 				Entries: []Log{
 					{Command: "0"},
 					{Command: "1"},
@@ -184,7 +183,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			name: "empty",
 			logs: 5,
 			args: AppendEntriesRequest{
-				offset:  0,
+				Offset:  0,
 				Entries: []Log{}},
 			expectedReply: AppendEntriesReply{
 				Success: true,
@@ -196,7 +195,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			name: "no match",
 			logs: 5,
 			args: AppendEntriesRequest{
-				offset: 1,
+				Offset: 1,
 				Entries: []Log{
 					{Command: "-1"},
 					{Command: "-2"},
@@ -212,7 +211,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			name: "no match, begin with 0",
 			logs: 5,
 			args: AppendEntriesRequest{
-				offset: 0,
+				Offset: 0,
 				Entries: []Log{
 					{Term: 11, Command: "0"},
 					{Command: "-1"},
@@ -228,7 +227,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			name: "match all",
 			logs: 5,
 			args: AppendEntriesRequest{
-				offset: 2,
+				Offset: 2,
 				Entries: []Log{
 					{Term: 2, Command: "2"},
 					{Term: 3, Command: "3"},
@@ -243,7 +242,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			name: "entries more than logs",
 			logs: 5,
 			args: AppendEntriesRequest{
-				offset: 3,
+				Offset: 3,
 				Entries: []Log{
 					{Term: 3, Command: "3"},
 					{Term: 4, Command: "4"},
@@ -275,7 +274,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 func Test_AppendEntries(t *testing.T) {
 	rq := require.New(t)
 	rf1 := makeRaft(4 * maxLogEntries)
-	ch := make(chan received, 1)
+	ch := make(chan received, 10)
 	rep := NewReplicator(1, 0, nil, rf1, tracer, ch, func() {}, len(rf1.logs)-1)
 
 	rf2 := Raft{
@@ -300,4 +299,12 @@ func Test_AppendEntries(t *testing.T) {
 	}
 
 	rq.True(reflect.DeepEqual(rf1.logs, rf2.logs))
+
+	// check commit
+	for r := range ch {
+		if r.index == 4*maxLogEntries-1 {
+			return
+		}
+	}
+	close(ch)
 }

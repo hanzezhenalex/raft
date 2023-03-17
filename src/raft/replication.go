@@ -59,7 +59,7 @@ func NewReplicationService(raft *Raft, nextIndex int) *ReplicationService {
 }
 
 func (rs *ReplicationService) daemon() {
-	rs.tracer.Debug("ReplicationService offset working")
+	rs.tracer.Debug("ReplicationService Offset working")
 
 	for peerCommit := range rs.commitCh {
 		rs.tracer.Debugf("peer %d last log index=%d", peerCommit.peer, peerCommit.index)
@@ -179,23 +179,18 @@ func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
 	}
 
 	if rep.status == matching {
-		if rep.nextIndex < 0 {
-			rep.nextIndex = 0
-		}
-		start := rep.nextIndex - maxLogEntries + 1
-		if start < 0 {
-			start = 0
-		}
-		args.offset = start
-		args.Entries = rep.logs[start : rep.nextIndex+1]
+		rep.nextIndex = max(rep.nextIndex, 0)
+		args.Offset = max(rep.nextIndex-maxLogEntries+1, 0)
+		args.Entries = rep.logs[args.Offset : rep.nextIndex+1]
 	} else {
-		// in appending entries, need to append a matched entry first
-		args.offset = max(rep.nextIndex-1, 0)
-		end := args.offset + maxLogEntries
+		args.Offset = max(rep.nextIndex-1, 0)
+		end := args.Offset + maxLogEntries
 		if end > len(rep.logs) {
 			end = len(rep.logs)
 		}
-		args.Entries = rep.logs[args.offset:end] // [ -> )
+		args.Entries = make([]Log, 0, end-args.Offset+1)
+		args.Entries = append(args.Entries, Log{Term: rep.raft.logs[args.Offset].Term})
+		args.Entries = append(args.Entries, rep.logs[args.Offset+1:end]...) // [ -> )
 	}
 	if rep.nextIndex >= len(rep.logs) {
 		return args, false // no entry to append
@@ -204,7 +199,7 @@ func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
 }
 
 func (rep *Replicator) update() {
-	rep.tracer.Debug("replicator offset update")
+	rep.tracer.Debug("replicator Offset update")
 
 	for {
 		select {
@@ -223,7 +218,7 @@ func (rep *Replicator) update() {
 
 		// try to append logs
 		DoWithTimeout(func() {
-			rep.tracer.Debugf("try to append %d", args.PreLogIndex+1)
+			rep.tracer.Debugf("try to append entries, start=%d", args.Offset)
 			ok = rep.peer.Call("Raft.AppendEntries", args, &reply) // may timeout
 		}, rep.raft.config.electionTimeout)
 
@@ -252,7 +247,7 @@ func (rep *Replicator) commit(last int) {
 }
 
 func (rep *Replicator) handleReply(args AppendEntriesRequest, reply *AppendEntriesReply) {
-	rep.tracer.Debugf("got reply reply=%#v, index=%d", reply, args.PreLogIndex)
+	rep.tracer.Debugf("got reply reply=%#v", reply)
 	rep.nextIndex = reply.Next
 
 	if reply.Success {

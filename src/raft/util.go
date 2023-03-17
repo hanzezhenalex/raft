@@ -12,7 +12,7 @@ func init() {
 	Debug = false
 	logrus.SetLevel(logrus.FatalLevel)
 
-	enableDebug()
+	//enableDebug()
 }
 
 func max(a, b int) int {
