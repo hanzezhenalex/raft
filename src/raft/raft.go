@@ -57,10 +57,6 @@ type Config struct {
 	electionTimeout time.Duration
 }
 
-type commits struct {
-	start, end int
-}
-
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu           sync.RWMutex        // Lock to protect shared access to this peer's state
