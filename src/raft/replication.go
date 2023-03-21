@@ -69,7 +69,9 @@ func (rs *ReplicationService) daemon() {
 		if index > rs.committed {
 			rs.committed = index
 			rs.tracer.Debugf("commit message, index=%d", index)
-			go rs.raft.applyMsg(index) // apply message even if we are not leader
+			go func() {
+				rs.raft.commit(index, false) // apply message even if we are not leader
+			}()
 		}
 	}
 }
@@ -254,7 +256,7 @@ func (rep *Replicator) handleReply(args AppendEntriesRequest, reply *AppendEntri
 		if rep.status == matching {
 			rep.status = replicating
 		}
-		go rep.commit(rep.nextIndex - 1)
+		rep.commit(rep.nextIndex - 1)
 	} else {
 		if rep.status == replicating {
 			rep.status = matching

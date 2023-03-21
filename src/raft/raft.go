@@ -20,7 +20,6 @@ package raft
 import (
 	"fmt"
 	"math/rand"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,7 +70,6 @@ type Raft struct {
 	dead         int32               // set by Kill()
 	resetTimerCh chan struct{}
 	electionCnt  int
-	commitCh     chan commits
 	applyCh      chan ApplyMsg
 
 	tracer             *logrus.Entry
@@ -247,66 +245,44 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 	return ok
 }
 
-func (rf *Raft) applyMsg(newCommitIndex int) {
+func (rf *Raft) commit(newCommitIndex int, locked bool) {
+	if !locked {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+	}
 	if rf.commitIndex < newCommitIndex {
 		if newCommitIndex > len(rf.logs)-1 {
 			newCommitIndex = len(rf.logs) - 1
 		}
-
-		old := rf.commitIndex
 		rf.commitIndex = newCommitIndex
-
-		go func() {
-			rf.tracer.Debugf("try to send commits, old=%d, end=%d", old+1, newCommitIndex)
-			rf.commitCh <- commits{
-				start: old + 1,
-				end:   newCommitIndex,
-			}
-		}()
 	}
 }
 
 func (rf *Raft) handleApplyMsg() {
-	rf.commitCh = make(chan commits)
-	lastCommitted := -1
-	var newCommits []commits
-	for c := range rf.commitCh {
-		if c.start <= lastCommitted {
-			continue
-		}
-		if c.start-lastCommitted != 1 { // todo
-			newCommits = append(newCommits, c)
-			sort.Slice(newCommits, func(i, j int) bool {
-				return newCommits[i].start < newCommits[j].start
-			})
-			rf.tracer.Debugf("inqueue: %#v", c)
-			continue
-		} else {
-			cnt := -1
-			for c.start-lastCommitted == 1 {
-				for i := c.start; i <= c.end; i++ {
-					lastCommitted++
-					command := rf.logs[i].Command
-					if command == noOpCommand {
-						continue
-					}
-					rf.lastApplied++
-					rf.tracer.Debugf("commit: command=%#v, index=%d", command, rf.lastApplied)
-					rf.applyCh <- ApplyMsg{
-						CommandValid: true,
-						CommandIndex: rf.lastApplied,
-						Command:      command,
-						Peer:         rf.me,
-					}
-				}
-				cnt++
-				if cnt < len(newCommits) {
-					c = newCommits[cnt]
-				} else {
-					break
-				}
+	index := -1
+	for rf.killed() == false {
+		time.Sleep(rf.config.electionTimeout / 5)
+
+		rf.mu.Lock()
+		lastApplied := rf.lastApplied
+		committed := rf.commitIndex
+		logs := rf.logs[lastApplied+1 : committed+1]
+		rf.lastApplied = committed
+		rf.mu.Unlock()
+
+		for i := lastApplied + 1; i <= committed; i++ {
+			log := logs[i-lastApplied-1]
+			if log.Command == noOpCommand {
+				continue
 			}
-			newCommits = newCommits[:cnt]
+			index++
+			rf.tracer.Debugf("apply message, index=%d, applied=%d", index, i)
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				CommandIndex: index,
+				Command:      log.Command,
+				Peer:         rf.me,
+			}
 		}
 	}
 }
@@ -346,9 +322,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	rf.voteFor = -1
 
 	rf.tryAppendEntries(args, reply)
-	if reply.Success {
-		rf.applyMsg(args.LeaderCommit)
-	}
+	rf.commit(args.LeaderCommit, true)
 }
 
 func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
