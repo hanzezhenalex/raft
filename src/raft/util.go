@@ -8,6 +8,8 @@ import (
 // Debugging
 var Debug bool
 
+var noOpCommand = "no-op"
+
 func init() {
 	Debug = false
 	logrus.SetLevel(logrus.FatalLevel)

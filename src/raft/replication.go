@@ -262,15 +262,8 @@ func (rep *Replicator) handleReply(args AppendEntriesRequest, reply *AppendEntri
 			rep.status = matching
 		}
 	}
-
-	{
-		// update term if needed
-		rep.raft.mu.Lock()
-		if reply.Term > rep.raft.currentTerm {
-			rep.raft.currentTerm = reply.Term
-		}
-		rep.raft.mu.Unlock()
-	}
+	// update term if needed
+	rep.raft.updateTerm(reply.Term, false)
 }
 
 func (rep *Replicator) stop() {
