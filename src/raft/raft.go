@@ -57,6 +57,10 @@ type Config struct {
 	electionTimeout time.Duration
 }
 
+type commits struct {
+	start, end int
+}
+
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu           sync.RWMutex        // Lock to protect shared access to this peer's state
@@ -241,16 +245,6 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 	return ok
 }
 
-func (rf *Raft) updateTerm(new int, locked bool) {
-	if !locked {
-		rf.mu.Lock()
-		defer rf.mu.Unlock()
-	}
-	if rf.currentTerm < new {
-		rf.currentTerm = new
-	}
-}
-
 func (rf *Raft) commit(newCommitIndex int, locked bool) {
 	if !locked {
 		rf.mu.Lock()
@@ -312,7 +306,9 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 
 	rf.mu.Lock()
 	defer func() {
-		rf.updateTerm(args.Term, true)
+		if args.Term > rf.currentTerm {
+			rf.currentTerm = args.Term
+		}
 		rf.mu.Unlock()
 		reply.Term = rf.currentTerm
 	}()
@@ -471,33 +467,7 @@ func (rf *Raft) fillRequestVotesArgs() (int, RequestVoteArgs) {
 	return rf.electionCnt, args
 }
 
-func (rf *Raft) handleRequestVote(peer int, tracer *logrus.Entry, args RequestVoteArgs, voteCh chan struct{}, wg *sync.WaitGroup) {
-	var (
-		ok        = false
-		reply     RequestVoteReply
-		subTracer = tracer.WithField("peer", peer)
-	)
-	defer func() { wg.Done() }()
-
-	DoWithTimeout(func() {
-		subTracer.Debugf("send rpc requestVote")
-		ok = rf.sendRequestVote(peer, args, &reply)
-	}, rf.config.electionTimeout)
-
-	if !ok {
-		subTracer.Debugf("timeout or peer disconnect when waiting for vote")
-		return
-	}
-
-	defer rf.updateTerm(reply.Term, false)
-
-	if reply.VoteGranted {
-		subTracer.Debug("election granted")
-		voteCh <- struct{}{}
-	} else {
-		subTracer.Debug("grant forbidden")
-	}
-}
+var noOpCommand = "no-op"
 
 func (rf *Raft) election() {
 	currentElectionCnt, args := rf.fillRequestVotesArgs()
@@ -508,33 +478,55 @@ func (rf *Raft) election() {
 		wg        sync.WaitGroup
 		replyCh   = make(chan struct{}, peers)
 		subTracer = rf.tracer.WithField("Term", args.Term).WithField("cnt", currentElectionCnt)
+		timer     = time.NewTimer(rf.config.electionTimeout)
 	)
 
 	wg.Add(peers)
-
 	go func() { wg.Wait(); close(replyCh) }()
 
+	subTracer.Debug("send requestVote rpc to peers")
 	for idx, _ := range rf.peers {
 		idx := idx
 		if idx == rf.me {
 			continue
 		}
-		go rf.handleRequestVote(idx, subTracer, args, replyCh, &wg)
+
+		go func(server int) {
+			defer func() { wg.Done() }()
+			subTracer := subTracer.WithField("peer", server)
+			subTracer.Debug("send rpc requestVote")
+			var reply RequestVoteReply
+			if ok := rf.sendRequestVote(idx, args, &reply); ok {
+				if reply.VoteGranted == true {
+					subTracer.Debug("election granted")
+					replyCh <- struct{}{}
+				} else {
+					subTracer.Debug("grant forbidden")
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
+
+					if rf.currentTerm < reply.Term {
+						rf.currentTerm = reply.Term
+					}
+				}
+			}
+		}(idx)
 	}
 
 	for {
-		_, ok := <-replyCh
-		if !ok {
-			break
-		}
-		if votes++; votes > peers/2 {
-			subTracer.Debug("win the election")
-			rf.mu.Lock()
-			if rf.electionCnt == currentElectionCnt {
-				rf.transferToLeader()
+		select {
+		case <-replyCh:
+			if votes++; votes > peers/2 {
+				subTracer.Debug("win the election")
+				rf.mu.Lock()
+				if rf.electionCnt == currentElectionCnt {
+					rf.transferToLeader()
+				}
+				rf.mu.Unlock()
+				return
 			}
-			rf.mu.Unlock()
-			break
+		case <-timer.C:
+			return
 		}
 	}
 }
