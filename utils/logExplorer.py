@@ -22,7 +22,7 @@ class RoleLogEntry:
 
     def gen(self, max_id: int):
         tdClass = 'td-id'
-        if self.log.startswith(" commit:"):
+        if self.log.startswith(" apply message"):
             tdClass = 'td-commit'
 
         body = ""

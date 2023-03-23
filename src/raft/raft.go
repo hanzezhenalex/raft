@@ -313,7 +313,7 @@ func (rf *Raft) handleApplyMsg() {
 				continue
 			}
 			index++
-			rf.tracer.Debugf("apply message, index=%d, applied=%d", index, i)
+			rf.tracer.Debugf("apply message, index=%d, applied=%d, command=%s", index, i, log.Command)
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,
 				CommandIndex: index,
@@ -339,7 +339,7 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
-	rf.tracer.Debugf("receive AppendEntries from %d, offset=%d", args.LeaderId, args.Offset)
+	rf.tracer.Debugf("receive AppendEntries from %d, offset=%d, logs=%#v", args.LeaderId, args.Offset, args.Entries)
 
 	rf.mu.Lock()
 	defer func() {
@@ -349,6 +349,8 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	}()
 
 	if args.Term < rf.currentTerm || args.LeaderCommit < rf.commitIndex {
+		rf.tracer.Debugf("AppendEntry rejected")
+		reply.Next = args.Offset + len(args.Entries) - 1
 		return
 	}
 
@@ -357,7 +359,6 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	rf.voteFor = -1
 
 	rf.tryAppendEntries(args, reply)
-	rf.commit(args.LeaderCommit, true)
 }
 
 func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
@@ -365,23 +366,31 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 		return args.Offset + i
 	}
 
-	matched := false
-	i := 0 // the first index of log that doesn't match
-	for ; i < len(args.Entries) && index(i) < len(rf.logs); i++ {
-		myLog := rf.logs[index(i)]
-		leaderLog := args.Entries[i]
-		if myLog.Term != leaderLog.Term {
-			break
+	match := len(args.Entries) - 1 // the first index of log that match
+	if len(args.Entries) > 0 && args.Entries[0].Command == "" && rf.logs[index(0)].Term == args.Entries[0].Term {
+		match = 0
+	} else {
+		for ; match >= 0; match-- {
+			if index(match) < len(rf.logs) {
+				myLog := rf.logs[index(match)]
+				leaderLog := args.Entries[match]
+				if myLog.Term == leaderLog.Term {
+					break
+				}
+			}
 		}
-		matched = true
 	}
 
-	if matched || args.Offset == 0 {
+	if match >= 0 || args.Offset == 0 {
 		reply.Success = true
-		if i < len(args.Entries) { // in case args.Entries is empty
-			rf.logs = append(rf.logs[:index(i)], args.Entries[i:]...)
+		offset := match + 1
+		if offset < len(args.Entries) { // in case args.Entries is empty
+			rf.logs = append(rf.logs[:index(offset)], args.Entries[offset:]...)
+			rf.tracer.Debugf("copy logs: old=%#v, new=%#v", rf.logs[:index(offset)], args.Entries[offset:])
+			rf.persist()
 		}
 		reply.Next = index(len(args.Entries))
+		rf.commit(min(args.LeaderCommit, index(len(args.Entries)-1)), true)
 	} else {
 		reply.Next = max(args.Offset-1, 0)
 	}
