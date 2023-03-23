@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"6.5840/labgob"
+	"bytes"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -117,6 +119,18 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// raftstate := w.Bytes()
 	// rf.persister.Save(raftstate, nil)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	e.Encode(rf.currentTerm) // assume no error
+	e.Encode(rf.voteFor)
+	e.Encode(rf.commitIndex)
+	e.Encode(rf.logs)
+
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
+
+	rf.printStatus("persist")
 }
 
 // restore previously persisted state.
@@ -137,6 +151,21 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	d.Decode(&rf.currentTerm)
+	d.Decode(&rf.voteFor)
+	d.Decode(&rf.commitIndex)
+	d.Decode(&rf.logs)
+
+	rf.printStatus("recover")
+}
+
+func (rf *Raft) printStatus(prefix string) {
+	status := fmt.Sprintf("term=%d, logs=%d, dcommitIndex=%d, lastApplied=%d, leader=%t",
+		rf.currentTerm, len(rf.logs), rf.commitIndex, rf.lastApplied, rf.isLeader)
+	rf.tracer.Debugf("[%s]raft status: %s", prefix, status)
 }
 
 // the service says it has created a snapshot that has
@@ -181,7 +210,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 	// update currentTerm
 	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
+		rf.updateTerm(args.Term, true)
 		rf.voteFor = -1
 	}
 
@@ -248,6 +277,7 @@ func (rf *Raft) updateTerm(new int, locked bool) {
 	}
 	if rf.currentTerm < new {
 		rf.currentTerm = new
+		rf.persist()
 	}
 }
 
@@ -261,6 +291,7 @@ func (rf *Raft) commit(newCommitIndex int, locked bool) {
 			newCommitIndex = len(rf.logs) - 1
 		}
 		rf.commitIndex = newCommitIndex
+		rf.persist()
 	}
 }
 
@@ -282,7 +313,7 @@ func (rf *Raft) handleApplyMsg() {
 				continue
 			}
 			index++
-			rf.tracer.Debugf("apply message, index=%d, applied=%d", index, i)
+			rf.tracer.Debugf("apply message, index=%d, applied=%d, command=%s", index, i, log.Command)
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,
 				CommandIndex: index,
@@ -308,7 +339,7 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
-	rf.tracer.Debugf("receive AppendEntries from %d, offset=%d", args.LeaderId, args.Offset)
+	rf.tracer.Debugf("receive AppendEntries from %d, offset=%d, logs=%#v", args.LeaderId, args.Offset, args.Entries)
 
 	rf.mu.Lock()
 	defer func() {
@@ -318,6 +349,8 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	}()
 
 	if args.Term < rf.currentTerm || args.LeaderCommit < rf.commitIndex {
+		rf.tracer.Debugf("AppendEntry rejected")
+		reply.Next = args.Offset + len(args.Entries) - 1
 		return
 	}
 
@@ -326,7 +359,6 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	rf.voteFor = -1
 
 	rf.tryAppendEntries(args, reply)
-	rf.commit(args.LeaderCommit, true)
 }
 
 func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
@@ -334,23 +366,32 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 		return args.Offset + i
 	}
 
-	matched := false
-	i := 0 // the first index of log that doesn't match
-	for ; i < len(args.Entries) && index(i) < len(rf.logs); i++ {
-		myLog := rf.logs[index(i)]
-		leaderLog := args.Entries[i]
-		if myLog.Term != leaderLog.Term {
-			break
+	match := len(args.Entries) - 1 // the first index of log that match
+	if len(args.Entries) > 0 && args.Entries[0].Command == "" && rf.logs[index(0)].Term == args.Entries[0].Term {
+		match = 0
+	} else {
+		for ; match >= 0; match-- {
+			if index(match) < len(rf.logs) {
+				myLog := rf.logs[index(match)]
+				leaderLog := args.Entries[match]
+				if myLog.Term == leaderLog.Term {
+					break
+				}
+			}
 		}
-		matched = true
 	}
 
-	if matched || args.Offset == 0 {
+	if match >= 0 || args.Offset == 0 {
 		reply.Success = true
-		if i < len(args.Entries) { // in case args.Entries is empty
-			rf.logs = append(rf.logs[:index(i)], args.Entries[i:]...)
+		offset := match + 1
+		if offset < len(args.Entries) { // in case args.Entries is empty
+			rf.logs = append(rf.logs[:index(offset)], args.Entries[offset:]...)
+			//rf.tracer.Debugf("copy logs: old=%#v", rf.logs[:index(offset)])
+			rf.tracer.Debugf("copy logs: new=%#v", args.Entries[offset:])
+			rf.persist()
 		}
 		reply.Next = index(len(args.Entries))
+		rf.commit(min(args.LeaderCommit, index(len(args.Entries)-1)), true)
 	} else {
 		reply.Next = max(args.Offset-1, 0)
 	}
@@ -371,7 +412,10 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	defer func() {
+		rf.persist()
+		rf.mu.Unlock()
+	}()
 
 	if !rf.isLeader {
 		return -1, -1, rf.isLeader
@@ -406,6 +450,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.stopLeader()
 }
 
 func (rf *Raft) killed() bool {
@@ -421,8 +468,7 @@ func (rf *Raft) ticker() {
 	for rf.killed() == false {
 		// Your code here (2A)
 		// Check if a leader election should be started.
-		rf.tracer.Debugf("raft status: logs=%d, committed=%d, term=%d, leader=%t",
-			len(rf.logs), rf.commitIndex, rf.currentTerm, rf.isLeader)
+		rf.printStatus("loop")
 		select {
 		case <-timer.C:
 			go rf.handleTimeout()
@@ -546,14 +592,12 @@ func (rf *Raft) transferToLeader() {
 		Term:    rf.currentTerm,
 		Command: noOpCommand,
 	})
-
 	go func() {
 		subTracer := rf.tracer.WithField("Term", rf.currentTerm)
-		subTracer.Debug("change to leader, Offset heart beat")
-
+		subTracer.Debug("change to leader, start heart beat")
 		rf.replicationService = NewReplicationService(rf, len(rf.logs)-1)
 	}()
-
+	rf.persist()
 	rf.resetTimer()
 }
 

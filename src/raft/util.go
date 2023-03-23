@@ -24,6 +24,13 @@ func max(a, b int) int {
 	return b
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func enableDebug() {
 	Debug = true
 	logrus.SetLevel(logrus.DebugLevel)
@@ -31,8 +38,6 @@ func enableDebug() {
 
 func DPrintf(format string, a ...interface{}) {
 	if Debug {
-		print("\n===================================================\n")
 		fmt.Printf(format, a...)
-		print("\n===================================================\n")
 	}
 }

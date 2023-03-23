@@ -733,7 +733,7 @@ func TestPersist12C(t *testing.T) {
 	cfg.start1(leader2, cfg.applier)
 	cfg.connect(leader2)
 
-	cfg.wait(4, servers, -1) // wait for leader2 to join before killing i3
+	cfg.wait(3, servers, -1) // wait for leader2 to join before killing i3
 
 	i3 := (cfg.checkOneLeader() + 1) % servers
 	cfg.disconnect(i3)
@@ -1090,8 +1090,8 @@ func internalChurn(t *testing.T, unreliable bool) {
 
 	lastIndex := cfg.one(rand.Int(), servers, true)
 
-	really := make([]int, lastIndex+1)
-	for index := 1; index <= lastIndex; index++ {
+	really := make([]int, 0, lastIndex+1)
+	for index := 0; index <= lastIndex; index++ {
 		v := cfg.wait(index, servers, -1)
 		if vi, ok := v.(int); ok {
 			really = append(really, vi)
@@ -1099,6 +1099,9 @@ func internalChurn(t *testing.T, unreliable bool) {
 			t.Fatalf("not an int")
 		}
 	}
+
+	DPrintf("values=%#v", values)
+	DPrintf("really=%#v", really)
 
 	for _, v1 := range values {
 		ok := false
@@ -1108,7 +1111,7 @@ func internalChurn(t *testing.T, unreliable bool) {
 			}
 		}
 		if ok == false {
-			cfg.t.Fatalf("didn't find a value")
+			cfg.t.Fatalf("didn't find a value, val=%d", v1)
 		}
 	}
 

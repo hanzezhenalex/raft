@@ -22,7 +22,7 @@ class RoleLogEntry:
 
     def gen(self, max_id: int):
         tdClass = 'td-id'
-        if self.log.startswith(" commit:"):
+        if self.log.startswith(" apply message"):
             tdClass = 'td-commit'
 
         body = ""
@@ -39,9 +39,14 @@ def createEntry(msg: str):
         return DebugLogEntry(msg), -1
 
     res = re.match(pattern, msg, flags=0)
-    id = int(res.group(4))
-    time = res.group(1)
-    log = res.group(3)+res.group(2)+res.group(5)
+    try:
+        id = int(res.group(4))
+        time = res.group(1)
+        log = res.group(3)+res.group(2)+res.group(5)
+    except Exception as e:
+        print("msg= {}".format(msg))
+        raise e
+
     return RoleLogEntry(time, id, log), id
 
 

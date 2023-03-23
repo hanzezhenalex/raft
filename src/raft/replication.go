@@ -59,7 +59,7 @@ func NewReplicationService(raft *Raft, nextIndex int) *ReplicationService {
 }
 
 func (rs *ReplicationService) daemon() {
-	rs.tracer.Debug("ReplicationService Offset working")
+	rs.tracer.Debug("ReplicationService start working")
 
 	for peerCommit := range rs.commitCh {
 		rs.tracer.Debugf("peer %d last log index=%d", peerCommit.peer, peerCommit.index)
@@ -201,7 +201,7 @@ func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
 }
 
 func (rep *Replicator) update() {
-	rep.tracer.Debug("replicator Offset update")
+	rep.tracer.Debug("replicator start update")
 
 	for {
 		select {
