@@ -386,7 +386,8 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 		offset := match + 1
 		if offset < len(args.Entries) { // in case args.Entries is empty
 			rf.logs = append(rf.logs[:index(offset)], args.Entries[offset:]...)
-			rf.tracer.Debugf("copy logs: old=%#v, new=%#v", rf.logs[:index(offset)], args.Entries[offset:])
+			//rf.tracer.Debugf("copy logs: old=%#v", rf.logs[:index(offset)])
+			rf.tracer.Debugf("copy logs: new=%#v", args.Entries[offset:])
 			rf.persist()
 		}
 		reply.Next = index(len(args.Entries))
