@@ -1,9 +1,5 @@
 package raft
 
-import (
-	"fmt"
-)
-
 type LogService struct {
 	raft  *Raft
 	store *Store
@@ -52,11 +48,12 @@ func (ls *LogService) AddLogs(logs []Log) {
 }
 
 // #######################################
-//
+// Store supports snapshot
 // #######################################
 
 type Store struct {
-	logs                []Log
+	logs []Log
+
 	lastIndexOfSnapshot int
 	snapshot            []byte
 }
@@ -76,7 +73,7 @@ func (s *Store) Length() int {
 func (s *Store) Append(logs ...Log) int {
 	first := len(s.logs)
 	s.logs = append(s.logs, logs...)
-	return first
+	return s.fromLogIndex(first)
 }
 
 type GetLogsResult struct {
@@ -85,11 +82,11 @@ type GetLogsResult struct {
 	Snapshot []byte
 }
 
-// Get retrieve data from `left` to `right`, both included
-// In return, Start is the first index of Logs
-// Snapshot will be filled if there is data in snapshot
+// Get retrieve data from `left` to `right`, both included;
+// In return, `Start` is the first index of `Logs`, -1 if all data in snapshot;
+// `Snapshot` will be filled if data in snapshot
 func (s *Store) Get(left, right int) GetLogsResult {
-	if left < right {
+	if left > right {
 		panic("left should be lower than right")
 	}
 	if right == -1 {
@@ -150,153 +147,4 @@ func (s *Store) fromLogIndex(index int) int {
 		panic("out of range")
 	}
 	return index + s.lastIndexOfSnapshot + 1
-}
-
-type Logs struct {
-	raft *Raft
-
-	lastLog Log
-	logs    []Log
-	noOp    int
-
-	lastIndexOfSnapshot int
-	snapshot            []byte
-	snapshotNoOp        int
-}
-
-func NewLogs(raft *Raft) *Logs {
-	return &Logs{raft: raft, lastIndexOfSnapshot: -1}
-}
-
-func (l *Logs) AppendOne(command interface{}) int {
-	newEntry := Log{
-		Term:    l.raft.currentTerm,
-		Command: command,
-	}
-	l.logs = append(l.logs, newEntry)
-	if command == noOpCommand {
-		l.noOp++
-	}
-	l.lastLog = newEntry
-	return l.fromLogIndex(len(l.logs) - 1)
-}
-
-func (l *Logs) toLogIndex(index int) int {
-	return index - l.lastIndexOfSnapshot - 1
-}
-
-func (l *Logs) fromLogIndex(index int) int {
-	if index < 0 {
-		panic(fmt.Sprintf("log index should upper than 0, actual=%d", index))
-	}
-	return index + l.lastIndexOfSnapshot + 1
-}
-
-func (l *Logs) AppendMany(commands []Log) {
-	if len(commands) <= 0 {
-		return
-	}
-	for _, log := range commands {
-		if log.Command == noOpCommand {
-			l.noOp++
-		}
-	}
-	l.logs = append(l.logs, commands...)
-	l.lastLog = l.logs[len(l.logs)-1]
-}
-
-func (l *Logs) ToNoOpIndex(index int) int {
-	index = index - l.noOp - l.snapshotNoOp
-	if index < 0 {
-		panic(fmt.Sprintf("out of range, expected=%d", index))
-	}
-	return index
-}
-
-func (l *Logs) FromNoOpIndex(index int) int {
-	return index + l.noOp + l.snapshotNoOp
-}
-
-func (l *Logs) Length() int {
-	return l.lastIndexOfSnapshot + 1 + len(l.logs)
-}
-
-func (l *Logs) GetLastLog() (bool, int, Log) {
-	if len(l.logs) == 0 && l.lastIndexOfSnapshot == -1 {
-		return false, -1, Log{}
-	}
-	if len(l.logs) == 0 {
-		return true, l.lastIndexOfSnapshot, l.lastLog
-	}
-	return true, l.fromLogIndex(len(l.logs) - 1), l.lastLog
-}
-
-func (l *Logs) Trim(end int) *Logs {
-	end = l.toLogIndex(end)
-	if end > len(l.logs)-1 {
-		panic(fmt.Sprintf("out of range, expected: %d, actual: %d", end, len(l.logs)-1))
-	}
-	if end >= 0 {
-		remove := l.logs[end:]
-		for _, log := range remove {
-			if log.Command == noOpCommand {
-				l.noOp--
-			}
-		}
-		l.logs = l.logs[:end]
-	}
-	return l
-}
-
-// RetrieveBackward try to fetch data from Logs, begin at `from`, trace backward, length=`expectedLength` (`from` is included)
-// return value: start of the logs fetched
-// if all the entries needed in snapshot, will return an empty slice
-func (l *Logs) RetrieveBackward(from int, expectedLength int) (int, []Log) {
-	if from == -1 {
-		from = l.fromLogIndex(len(l.logs) - 1)
-	}
-	from = l.toLogIndex(from)
-	if from > len(l.logs)-1 {
-		panic(fmt.Sprintf("out of range, expected=%d, actual=%d", from, len(l.logs)-1))
-	}
-	if from < 0 {
-		return -1, []Log{}
-	}
-	from++
-	start := max(from-expectedLength, 0)
-	return l.fromLogIndex(start), l.logs[start:from]
-}
-
-// RetrieveForward try to fetch data from Logs, begin at `from`, length=`expectedLength` (`from` is included)
-// return value: start of the logs fetched, if it does not equal to `from`, that means at least some logs are in snapshot
-// if all the entries needed in snapshot, will return an empty slice
-func (l *Logs) RetrieveForward(from int, expectedLength int) (int, []Log) {
-	if from >= len(l.logs) {
-		panic(fmt.Sprintf("out of range, expected=%d, actual=%d", from, len(l.logs)))
-	}
-	end := min(from+expectedLength, len(l.logs))
-	if from < 0 {
-		from = 0
-	}
-	if end <= 0 {
-		return -1, []Log{}
-	}
-	return from, l.logs[from:end]
-}
-
-func (l *Logs) Snapshot(index int, snapshot []byte) {
-	i := l.toLogIndex(index)
-	if i >= len(l.logs) || i < 0 {
-		panic(fmt.Sprintf("out of range, expected:%d, actual:%d", i, len(l.logs)-1))
-	}
-	remove := l.logs[:i+1]
-	for _, log := range remove {
-		if log.Command == noOpCommand {
-			l.noOp--
-			l.snapshotNoOp++
-		}
-	}
-	l.logs = l.logs[i+1:]
-	l.snapshot = snapshot
-	l.lastIndexOfSnapshot = i
 }
