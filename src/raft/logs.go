@@ -1,12 +1,42 @@
 package raft
 
+type GetLogsResult struct {
+	Start    int
+	Logs     []Log
+	Snapshot []byte
+}
+
+type LogState struct {
+	Logs                []Log
+	LastIndexOfSnapshot int
+	Snapshot            []byte
+}
+
+type ServiceState struct {
+	LogState
+	LastLog      Log
+	LastLogIndex int
+	NoOp         int
+}
+
+type LogStore interface {
+	Length() int
+	Append(logs ...Log) int
+	Get(left, right int) GetLogsResult
+	Trim(end int)
+	BuildSnapshot(index int, snapshot []byte)
+	GetState() LogState
+}
+
 type LogService struct {
 	raft  *Raft
-	store *Store
+	store LogStore
 
-	lastLog      Log
-	lastLogIndex int
-	noOp         int
+	lastLog              Log
+	lastLogIndex         int
+	lastSnapshotLog      Log
+	lastSnapshotLogIndex int
+	noOp                 int
 }
 
 func NewLogService(raft *Raft, lastLog Log, lastLogIndex int, noOp int,
@@ -47,6 +77,88 @@ func (ls *LogService) AddLogs(logs []Log) {
 	ls.store.Append(logs...)
 }
 
+func (ls LogService) RetrieveForward(start int, length int) GetLogsResult {
+	end := min(start+length, ls.store.Length()-1)
+	return ls.store.Get(start, end)
+}
+
+func (ls LogService) RetrieveBackward(end int, length int) GetLogsResult {
+	start := end - length
+	if start < 0 {
+		panic("out of range")
+	}
+	return ls.store.Get(start, end)
+}
+
+func (ls *LogService) GetState() ServiceState {
+	return ServiceState{
+		LogState:     ls.store.GetState(),
+		LastLog:      ls.lastLog,
+		LastLogIndex: ls.lastLogIndex,
+		NoOp:         ls.noOp,
+	}
+}
+
+func (ls *LogService) Trim(end int) {
+	if end > ls.store.Length() {
+		panic("out of range")
+	}
+	// update noOp
+	if end+1 < ls.store.Length() {
+		toRemove := ls.store.Get(end+1, -1)
+		if toRemove.Snapshot != nil {
+			// todo log warning
+			panic("should not trim committed logs")
+		}
+		for _, log := range toRemove.Logs {
+			if log.Command == noOpCommand {
+				ls.noOp--
+			}
+		}
+	}
+	// update lastLog
+	ret := ls.store.Get(end, end)
+	if ret.Snapshot == nil {
+		ls.lastLogIndex = ret.Start
+		ls.lastLog = ret.Logs[0]
+	} else {
+		ls.lastLogIndex = ls.lastSnapshotLogIndex
+		ls.lastLog = ls.lastSnapshotLog
+	}
+	// do trim
+	ls.store.Trim(end)
+}
+
+func (ls *LogService) Snapshot(index int, snapshot []byte) {
+	ret := ls.store.Get(index, index)
+	if ret.Snapshot != nil {
+		return
+	}
+	ls.lastSnapshotLogIndex = ret.Start
+	ls.lastSnapshotLog = ret.Logs[0]
+	ls.store.BuildSnapshot(index, snapshot)
+}
+
+func (ls *LogService) FromNoOpIndex(index int) int {
+	return index + ls.noOp
+}
+
+func (ls *LogService) ToNoOpIndex(index int) int {
+	index = index - ls.noOp
+	if index < 0 {
+		panic("out of range")
+	}
+	return index
+}
+
+func (ls *LogService) IsPeerLogAhead(args RequestVoteArgs) bool {
+	if ls.lastLogIndex == -1 {
+		return true
+	}
+	return args.LastLogTerm > ls.lastLog.Term ||
+		(args.LastLogTerm == ls.lastLog.Term && args.LastLogIndex >= ls.lastLogIndex)
+}
+
 // #######################################
 // Store supports snapshot
 // #######################################
@@ -74,12 +186,6 @@ func (s *Store) Append(logs ...Log) int {
 	first := len(s.logs)
 	s.logs = append(s.logs, logs...)
 	return s.fromLogIndex(first)
-}
-
-type GetLogsResult struct {
-	Start    int
-	Logs     []Log
-	Snapshot []byte
 }
 
 // Get retrieve data from `left` to `right`, both included;
@@ -132,6 +238,14 @@ func (s *Store) BuildSnapshot(index int, snapshot []byte) {
 	}
 	s.snapshot = snapshot
 	s.lastIndexOfSnapshot = index
+}
+
+func (s *Store) GetState() LogState {
+	return LogState{
+		Logs:                s.logs,
+		LastIndexOfSnapshot: s.lastIndexOfSnapshot,
+		Snapshot:            s.snapshot,
+	}
 }
 
 func (s *Store) toLogIndex(index int) int {
