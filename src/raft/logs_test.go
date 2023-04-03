@@ -3,6 +3,7 @@ package raft
 import (
 	"testing"
 
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -271,4 +272,126 @@ func TestStore_BuildSnapshot(t *testing.T) {
 	rq.EqualValues([]byte("3"), s.snapshot)
 	rq.Equal(0, len(s.logs))
 	rq.Equal(7, s.Length())
+}
+
+func NewEmptyLogService() *LogService {
+	return &LogService{
+		raft:         &Raft{},
+		lastLogIndex: -1,
+	}
+}
+
+func TestLogService_AddCommand(t *testing.T) {
+	rq := require.New(t)
+	mockStore := NewMockLogStore(gomock.NewController(t))
+	ls := NewEmptyLogService()
+	ls.store = mockStore
+
+	// test 1: Add non-noop log
+	mockStore.EXPECT().Append(Log{
+		Command: 0,
+	}).Times(1).Return(0)
+
+	ls.AddCommand(0)
+	rq.Equal(0, ls.lastLogIndex)
+	rq.Equal(0, ls.lastLog.Command)
+	rq.Equal(0, ls.noOp)
+
+	// test 2: Add noop log
+	mockStore.EXPECT().Append(Log{
+		Command: noOpCommand,
+	}).Times(1).Return(0)
+
+	ls.AddCommand(noOpCommand)
+	rq.Equal(1, ls.lastLogIndex)
+	rq.Equal(noOpCommand, ls.lastLog.Command)
+	rq.Equal(1, ls.noOp)
+}
+
+func TestLogService_AddLogs(t *testing.T) {
+	rq := require.New(t)
+	mockStore := NewMockLogStore(gomock.NewController(t))
+	ls := NewEmptyLogService()
+	ls.store = mockStore
+	logs := []Log{
+		{Command: "0"}, {Command: "1"}, {Command: "2"}, {Command: "3"}, {Command: noOpCommand}, {Command: "5"}, {Command: "6"},
+	}
+	mockStore.EXPECT().Append(logs).Times(1).Return(0)
+
+	ls.AddLogs(logs)
+	rq.Equal(6, ls.lastLogIndex)
+	rq.Equal("6", ls.lastLog.Command)
+	rq.Equal(1, ls.noOp)
+}
+
+func TestLogService_Retrieve(t *testing.T) {
+	mockStore := NewMockLogStore(gomock.NewController(t))
+	ls := NewEmptyLogService()
+	ls.store = mockStore
+
+	// test 1: backward
+	mockStore.EXPECT().Get(2, 4).Times(1)
+	ls.RetrieveBackward(4, 3)
+
+	// test 2: forward
+	mockStore.EXPECT().Get(1, 3).Times(1)
+	mockStore.EXPECT().Length().Return(100).Times(1)
+	ls.RetrieveForward(1, 3)
+
+	// test 2: forward, not enough
+	mockStore.EXPECT().Get(1, 1).Times(1)
+	mockStore.EXPECT().Length().Return(2).Times(1)
+	ls.RetrieveForward(1, 3)
+}
+
+func TestLogService_Trim(t *testing.T) {
+	rq := require.New(t)
+	mockStore := NewMockLogStore(gomock.NewController(t))
+	ls := NewEmptyLogService()
+	ls.store = mockStore
+
+	// test 1: removed contains noop
+	mockStore.EXPECT().Length().Return(13).Times(2)
+	mockStore.EXPECT().Get(11, -1).Return(GetLogsResult{
+		Start: 11,
+		Logs: []Log{
+			{Command: 11}, {Command: noOpCommand},
+		},
+		Snapshot: nil,
+	})
+	mockStore.EXPECT().Get(10, 10).Return(GetLogsResult{
+		Start:    10,
+		Logs:     []Log{{Command: 10}},
+		Snapshot: nil,
+	})
+	mockStore.EXPECT().Trim(10)
+	ls.noOp = 1
+
+	ls.Trim(10)
+	rq.Equal(10, ls.lastLogIndex)
+	rq.Equal(10, ls.lastLog.Command)
+	rq.Equal(0, ls.noOp)
+
+	// test 2: last log in snapshot
+	mockStore.EXPECT().Length().Return(3).Times(2)
+	mockStore.EXPECT().Get(1, -1).Return(GetLogsResult{
+		Start: 1,
+		Logs: []Log{
+			{Command: 1}, {Command: 2},
+		},
+		Snapshot: nil,
+	})
+	mockStore.EXPECT().Get(0, 0).Return(GetLogsResult{
+		Start:    -1,
+		Snapshot: []byte("snapshot"),
+	})
+	mockStore.EXPECT().Trim(0)
+	ls.noOp = 1
+	ls.lastSnapshotLog.Command = "snapshot log"
+	ls.lastSnapshotLogIndex = 0
+
+	ls.Trim(0)
+	rq.Equal(0, ls.lastLogIndex)
+	rq.Equal("snapshot log", ls.lastLog.Command)
+	rq.Equal(1, ls.noOp)
 }

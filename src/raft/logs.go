@@ -77,13 +77,13 @@ func (ls *LogService) AddLogs(logs []Log) {
 	ls.store.Append(logs...)
 }
 
-func (ls LogService) RetrieveForward(start int, length int) GetLogsResult {
-	end := min(start+length, ls.store.Length()-1)
+func (ls *LogService) RetrieveForward(start int, length int) GetLogsResult {
+	end := min(start+length-1, ls.store.Length()-1)
 	return ls.store.Get(start, end)
 }
 
-func (ls LogService) RetrieveBackward(end int, length int) GetLogsResult {
-	start := end - length
+func (ls *LogService) RetrieveBackward(end int, length int) GetLogsResult {
+	start := end - length + 1
 	if start < 0 {
 		panic("out of range")
 	}
