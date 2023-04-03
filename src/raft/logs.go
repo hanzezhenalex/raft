@@ -1,5 +1,7 @@
 package raft
 
+import "github.com/sirupsen/logrus"
+
 type GetLogsResult struct {
 	Start    int
 	Logs     []Log
@@ -19,6 +21,15 @@ type ServiceState struct {
 	NoOp         int
 }
 
+func DefaultServiceState() ServiceState {
+	return ServiceState{
+		LogState: LogState{
+			LastIndexOfSnapshot: -1,
+		},
+		LastLogIndex: -1,
+	}
+}
+
 type LogStore interface {
 	Length() int
 	Append(logs ...Log) int
@@ -29,8 +40,9 @@ type LogStore interface {
 }
 
 type LogService struct {
-	raft  *Raft
-	store LogStore
+	raft   *Raft
+	store  LogStore
+	tracer *logrus.Entry
 
 	lastLog              Log
 	lastLogIndex         int
@@ -39,14 +51,14 @@ type LogService struct {
 	noOp                 int
 }
 
-func NewLogService(raft *Raft, lastLog Log, lastLogIndex int, noOp int,
-	logs []Log, lastIndexOfSnapshot int, snapshot []byte) *LogService {
+func NewLogService(raft *Raft, state ServiceState, tracer *logrus.Entry) *LogService {
 	return &LogService{
 		raft:         raft,
-		store:        NewStore(logs, lastIndexOfSnapshot, snapshot),
-		lastLogIndex: lastLogIndex,
-		lastLog:      lastLog,
-		noOp:         noOp,
+		store:        NewStore(state.LogState),
+		lastLogIndex: state.LastLogIndex,
+		lastLog:      state.LastLog,
+		noOp:         state.NoOp,
+		tracer:       tracer,
 	}
 }
 
@@ -170,11 +182,11 @@ type Store struct {
 	snapshot            []byte
 }
 
-func NewStore(logs []Log, lastIndexOfSnapshot int, snapshot []byte) *Store {
+func NewStore(state LogState) *Store {
 	return &Store{
-		logs:                logs,
-		lastIndexOfSnapshot: lastIndexOfSnapshot,
-		snapshot:            snapshot,
+		logs:                state.Logs,
+		lastIndexOfSnapshot: state.LastIndexOfSnapshot,
+		snapshot:            state.Snapshot,
 	}
 }
 
