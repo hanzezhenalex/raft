@@ -13,7 +13,9 @@ var tracer = logrus.WithField("test", "test")
 
 func makeRaft(n int) *Raft {
 	raft := &Raft{
-		logs: make([]Log, 0, n),
+		logs:      make([]Log, 0, n),
+		tracer:    tracer,
+		persister: MakePersister(),
 	}
 	for i := 0; i < n; i++ {
 		raft.logs = append(raft.logs, Log{i, fmt.Sprintf("%d", i)})
@@ -285,6 +287,8 @@ func Test_AppendEntries(t *testing.T) {
 			{Term: 6, Command: "6"},
 			{Term: 7, Command: "7"},
 		},
+		tracer:    tracer,
+		persister: MakePersister(),
 	}
 
 	for {
