@@ -18,7 +18,6 @@ package raft
 //
 
 import (
-	"6.5840/labgob"
 	"bytes"
 	"fmt"
 	"math/rand"
@@ -26,7 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 
 	"github.com/sirupsen/logrus"
@@ -68,7 +67,7 @@ type Raft struct {
 	dead         int32               // set by Kill()
 	resetTimerCh chan struct{}
 	electionCnt  int
-	applyCh      chan ApplyMsg
+	applier      *Applier
 
 	tracer             *logrus.Entry
 	config             Config
@@ -159,6 +158,12 @@ func (rf *Raft) readPersist(data []byte) {
 	d.Decode(&rf.commitIndex)
 	d.Decode(&rf.logs)
 
+	if rf.commitIndex >= 0 {
+		rf.applier.Apply(ApplyRequest{
+			Start: 0,
+			Logs:  rf.logs[0 : rf.commitIndex+1],
+		})
+	}
 	rf.printStatus("recover")
 }
 
@@ -168,7 +173,7 @@ func (rf *Raft) printStatus(prefix string) {
 	rf.tracer.Debugf("[%s]raft status: %s", prefix, status)
 }
 
-// the service says it has created a snapshot that has
+// Snapshot the service says it has created a snapshot that has
 // all info up to and including index. this means the
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
@@ -290,37 +295,12 @@ func (rf *Raft) commit(newCommitIndex int, locked bool) {
 		if newCommitIndex > len(rf.logs)-1 {
 			newCommitIndex = len(rf.logs) - 1
 		}
+		rf.applier.Apply(ApplyRequest{
+			Start: rf.commitIndex + 1,
+			Logs:  rf.logs[rf.commitIndex+1 : newCommitIndex+1],
+		})
 		rf.commitIndex = newCommitIndex
 		rf.persist()
-	}
-}
-
-func (rf *Raft) handleApplyMsg() {
-	index := -1
-	for rf.killed() == false {
-		time.Sleep(rf.config.electionTimeout / 5)
-
-		rf.mu.Lock()
-		lastApplied := rf.lastApplied
-		committed := rf.commitIndex
-		logs := rf.logs[lastApplied+1 : committed+1]
-		rf.lastApplied = committed
-		rf.mu.Unlock()
-
-		for i := lastApplied + 1; i <= committed; i++ {
-			log := logs[i-lastApplied-1]
-			if log.Command == noOpCommand {
-				continue
-			}
-			index++
-			rf.tracer.Debugf("apply message, index=%d, applied=%d, command=%s", index, i, log.Command)
-			rf.applyCh <- ApplyMsg{
-				CommandValid: true,
-				CommandIndex: index,
-				Command:      log.Command,
-				Peer:         rf.me,
-			}
-		}
 	}
 }
 
@@ -453,6 +433,7 @@ func (rf *Raft) Kill() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.stopLeader()
+	rf.applier.Stop()
 }
 
 func (rf *Raft) killed() bool {
@@ -637,14 +618,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.voteFor = -1
 	rf.tracer = logrus.WithField("id", me)
 	rf.resetTimerCh = make(chan struct{})
-	rf.applyCh = applyCh
+	rf.applier = NewApplier(rf.me, applyCh, rf.tracer)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// Offset ticker goroutine to Offset elections
 	go rf.ticker()
-	go rf.handleApplyMsg()
+	go rf.applier.Daemon()
 	return rf
 }
 
