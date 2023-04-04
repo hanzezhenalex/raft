@@ -79,7 +79,7 @@ type Raft struct {
 	// Persistent state on all server
 	currentTerm int
 	voteFor     int
-	logs        []Log
+	logs        *LogService
 	// Volatile state on all servers
 	commitIndex int
 	lastApplied int
@@ -159,17 +159,18 @@ func (rf *Raft) readPersist(data []byte) {
 	d.Decode(&rf.logs)
 
 	if rf.commitIndex >= 0 {
+		ret := rf.logs.RetrieveForward(0, rf.commitIndex)
 		rf.applier.Apply(ApplyRequest{
 			Start: 0,
-			Logs:  rf.logs[0 : rf.commitIndex+1],
+			Logs:  ret.Logs,
 		})
 	}
 	rf.printStatus("recover")
 }
 
 func (rf *Raft) printStatus(prefix string) {
-	status := fmt.Sprintf("term=%d, logs=%d, dcommitIndex=%d, lastApplied=%d, leader=%t",
-		rf.currentTerm, len(rf.logs), rf.commitIndex, rf.lastApplied, rf.isLeader)
+	status := fmt.Sprintf("term=%d, last log=%d, dcommitIndex=%d, lastApplied=%d, leader=%t",
+		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.lastApplied, rf.isLeader)
 	rf.tracer.Debugf("[%s]raft status: %s", prefix, status)
 }
 
@@ -220,27 +221,12 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) &&
-		rf.canBeLeader(args) {
+		rf.logs.IsPeerLogAhead(args) {
 		rf.voteFor = args.CandidateId
 		rf.stopLeader()
 
 		reply.VoteGranted = true
 		rf.resetTimer()
-	}
-}
-
-// with lock
-func (rf *Raft) canBeLeader(args RequestVoteArgs) bool {
-	lastEntryTerm := -1
-	if len(rf.logs) > 0 {
-		lastEntryTerm = rf.logs[len(rf.logs)-1].Term
-	}
-	if lastEntryTerm > args.LastLogTerm {
-		return false
-	} else if lastEntryTerm == args.LastLogTerm {
-		return args.LastLogIndex >= len(rf.logs)-1
-	} else {
-		return true
 	}
 }
 
@@ -293,12 +279,13 @@ func (rf *Raft) commit(newCommitIndex int, locked bool) {
 		defer rf.mu.Unlock()
 	}
 	if rf.commitIndex < newCommitIndex {
-		if newCommitIndex > len(rf.logs)-1 {
-			newCommitIndex = len(rf.logs) - 1
+		if newCommitIndex > rf.logs.lastLogIndex {
+			newCommitIndex = rf.logs.lastLogIndex
 		}
+		ret := rf.logs.Get(rf.commitIndex+1, newCommitIndex)
 		rf.applier.Apply(ApplyRequest{
 			Start: rf.commitIndex + 1,
-			Logs:  rf.logs[rf.commitIndex+1 : newCommitIndex+1],
+			Logs:  ret.Logs, //[rf.commitIndex+1 : newCommitIndex+1]
 		})
 		rf.commitIndex = newCommitIndex
 		rf.persist()
@@ -347,17 +334,17 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 		return args.Offset + i
 	}
 
-	match := len(args.Entries) - 1 // the first index of log that match
-	if len(args.Entries) > 0 && args.Entries[0].Command == "" && rf.logs[index(0)].Term == args.Entries[0].Term {
+	ret := rf.logs.RetrieveForward(args.Offset, len(args.Entries))
+
+	match := len(ret.Logs) - 1 // the first index of log that match
+	if len(args.Entries) > 0 && ret.Logs[0].Term == args.Entries[0].Term {
 		match = 0
 	} else {
 		for ; match >= 0; match-- {
-			if index(match) < len(rf.logs) {
-				myLog := rf.logs[index(match)]
-				leaderLog := args.Entries[match]
-				if myLog.Term == leaderLog.Term {
-					break
-				}
+			myLog := ret.Logs[match]
+			leaderLog := args.Entries[match]
+			if myLog.Term == leaderLog.Term {
+				break
 			}
 		}
 	}
@@ -366,8 +353,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 		reply.Success = true
 		offset := match + 1
 		if offset < len(args.Entries) { // in case args.Entries is empty
-			rf.logs = append(rf.logs[:index(offset)], args.Entries[offset:]...)
-			//rf.tracer.Debugf("copy logs: old=%#v", rf.logs[:index(offset)])
+			rf.logs.Trim(index(offset) - 1).AddLogs(args.Entries[offset:])
 			rf.tracer.Debugf("copy logs: new=%#v", args.Entries[offset:])
 			rf.persist()
 		}
@@ -397,26 +383,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.persist()
 		rf.mu.Unlock()
 	}()
-
 	if !rf.isLeader {
 		return -1, -1, rf.isLeader
 	}
-
 	rf.tracer.Debugf("receive a message, command=%#v", command)
-
-	rf.logs = append(rf.logs, Log{
-		Term:    rf.currentTerm,
-		Command: command,
-	})
-
-	index := 0
-	for _, log := range rf.logs {
-		if log.Command != noOpCommand {
-			index++
-		}
-	}
-
-	return index - 1, rf.currentTerm, rf.isLeader
+	index := rf.logs.AddCommand(command)
+	return rf.logs.ToNoOpIndex(index), rf.currentTerm, rf.isLeader
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -488,14 +460,9 @@ func (rf *Raft) fillRequestVotesArgs() (int, RequestVoteArgs) {
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateId:  rf.me,
-		LastLogIndex: len(rf.logs) - 1,
+		LastLogIndex: rf.logs.GetLastLogIndex(),
+		LastLogTerm:  rf.logs.GetLastLogTerm(),
 	}
-	if len(rf.logs) <= 0 {
-		args.LastLogTerm = -1
-	} else {
-		args.LastLogTerm = rf.logs[len(rf.logs)-1].Term
-	}
-
 	return rf.electionCnt, args
 }
 
@@ -570,14 +537,11 @@ func (rf *Raft) election() {
 func (rf *Raft) transferToLeader() {
 	rf.isLeader = true
 	rf.voteFor = -1
-	rf.logs = append(rf.logs, Log{
-		Term:    rf.currentTerm,
-		Command: noOpCommand,
-	})
+	rf.logs.AddCommand(noOpCommand)
 	go func() {
 		subTracer := rf.tracer.WithField("Term", rf.currentTerm)
 		subTracer.Debug("change to leader, start heart beat")
-		rf.replicationService = NewReplicationService(rf, len(rf.logs)-1)
+		rf.replicationService = NewReplicationService(rf, rf.logs.GetLastLogIndex())
 	}()
 	rf.persist()
 	rf.resetTimer()

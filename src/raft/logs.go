@@ -89,6 +89,10 @@ func (ls *LogService) AddLogs(logs []Log) {
 	ls.store.Append(logs...)
 }
 
+func (ls *LogService) Get(left, right int) GetLogsResult {
+	return ls.store.Get(left, right)
+}
+
 func (ls *LogService) RetrieveForward(start int, length int) GetLogsResult {
 	end := min(start+length-1, ls.store.Length()-1)
 	return ls.store.Get(start, end)
@@ -111,7 +115,7 @@ func (ls *LogService) GetState() ServiceState {
 	}
 }
 
-func (ls *LogService) Trim(end int) {
+func (ls *LogService) Trim(end int) *LogService {
 	if end > ls.store.Length() {
 		panic("out of range")
 	}
@@ -139,6 +143,7 @@ func (ls *LogService) Trim(end int) {
 	}
 	// do trim
 	ls.store.Trim(end)
+	return ls
 }
 
 func (ls *LogService) Snapshot(index int, snapshot []byte) {
@@ -169,6 +174,17 @@ func (ls *LogService) IsPeerLogAhead(args RequestVoteArgs) bool {
 	}
 	return args.LastLogTerm > ls.lastLog.Term ||
 		(args.LastLogTerm == ls.lastLog.Term && args.LastLogIndex >= ls.lastLogIndex)
+}
+
+func (ls *LogService) GetLastLogTerm() int {
+	if ls.lastLogIndex == -1 {
+		return -1
+	}
+	return ls.lastLog.Term
+}
+
+func (ls *LogService) GetLastLogIndex() int {
+	return ls.lastLogIndex
 }
 
 // #######################################
