@@ -225,6 +225,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		rf.stopLeader()
 
 		reply.VoteGranted = true
+		rf.resetTimer()
 	}
 }
 
