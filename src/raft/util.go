@@ -45,3 +45,10 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func assert(cond bool, format string, args ...interface{}) {
+	if !cond {
+		panic(fmt.Sprintf(format, args...))
+	}
+}
+

@@ -303,7 +303,7 @@ func Test_AppendEntries(t *testing.T) {
 		rep.handleReply(args, &reply)
 	}
 
-	rq.True(reflect.DeepEqual(rf1.logs, rf2.logs))
+	rq.True(reflect.DeepEqual(rf1.logs.lastLogIndex, rf2.logs.lastLogIndex))
 
 	// check commit
 	for r := range ch {

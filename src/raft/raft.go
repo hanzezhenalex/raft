@@ -330,6 +330,12 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 }
 
 func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
+	if len(args.Entries) == 0 {
+		reply.Success = true
+		reply.Next = args.Offset
+		return
+	}
+
 	index := func(i int) int {
 		return args.Offset + i
 	}
@@ -337,15 +343,17 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	ret := rf.logs.RetrieveForward(args.Offset, len(args.Entries))
 
 	match := len(ret.Logs) - 1 // the first index of log that match
-	if len(args.Entries) > 0 && ret.Logs[0].Term == args.Entries[0].Term {
-		match = 0
-	} else {
-		for ; match >= 0; match-- {
-			myLog := ret.Logs[match]
-			leaderLog := args.Entries[match]
-			if myLog.Term == leaderLog.Term {
-				break
-			}
+	if len(ret.Logs) > 0 {
+		if firstLog := ret.Logs[0]; firstLog.Command == "" && firstLog.Term == args.Entries[0].Term {
+			match = 0
+		}
+	}
+
+	for ; match >= 0; match-- {
+		myLog := ret.Logs[match]
+		leaderLog := args.Entries[match]
+		if myLog.Term == leaderLog.Term {
+			break
 		}
 	}
 
