@@ -262,8 +262,7 @@ func (s *Store) Get(left, right int) GetLogsResult {
 	return ret
 }
 
-// Trim the log, `end` included
-// end is the last log reserved
+// Trim the log, `end` is the last log reserved
 func (s *Store) Trim(end int) {
 	end = s.toLogIndex(end)
 	assert(end >= -1, "should not trim committed logs, end=%d", end)

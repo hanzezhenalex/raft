@@ -124,7 +124,7 @@ func (rf *Raft) persist() {
 	e.Encode(rf.currentTerm) // assume no error
 	e.Encode(rf.voteFor)
 	e.Encode(rf.commitIndex)
-	e.Encode(rf.logs)
+	e.Encode(rf.logs.GetState())
 
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
@@ -152,12 +152,14 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
+	state := DefaultServiceState()
 
 	d.Decode(&rf.currentTerm)
 	d.Decode(&rf.voteFor)
 	d.Decode(&rf.commitIndex)
-	d.Decode(&rf.logs)
+	d.Decode(&state)
 
+	rf.logs = NewLogService(rf, state, rf.tracer.WithField("role", "log service"))
 	if rf.commitIndex >= 0 {
 		ret := rf.logs.RetrieveForward(0, rf.commitIndex)
 		rf.applier.Apply(ApplyRequest{
@@ -296,6 +298,7 @@ type AppendEntriesRequest struct {
 	Term         int
 	LeaderId     int
 	Offset       int
+	FirstLogTerm int
 	Entries      []Log
 	LeaderCommit int
 }
@@ -336,38 +339,47 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 		return
 	}
 
-	index := func(i int) int {
+	_fromLogIndex := func(i int) int {
 		return args.Offset + i
+	}
+	_toLogIndex := func(i int) int {
+		return i - args.Offset
 	}
 
 	ret := rf.logs.RetrieveForward(args.Offset, len(args.Entries))
 
+	RetLogToCorrespondPeerLog := func(i int) int {
+		ahead := ret.Start - args.Offset
+		return ahead + i
+	}
+
 	match := len(ret.Logs) - 1 // the first index of log that match
+
 	if len(ret.Logs) > 0 {
-		if firstLog := ret.Logs[0]; firstLog.Command == "" && firstLog.Term == args.Entries[0].Term {
-			match = 0
+		// try to march log from end
+		for ; match >= _toLogIndex(ret.Start); match-- {
+			myLog := ret.Logs[match]
+			leaderLog := args.Entries[RetLogToCorrespondPeerLog(match)]
+			if myLog.Term == leaderLog.Term {
+				break
+			}
 		}
 	}
 
-	for ; match >= 0; match-- {
-		myLog := ret.Logs[match]
-		leaderLog := args.Entries[match]
-		if myLog.Term == leaderLog.Term {
-			break
-		}
-	}
-
+	// possibility when match >= 0:
+	// 1) log matches, index = match, append at match+1
+	// 2) snapshot exists, match = last snapshot index, append at match+1
 	if match >= 0 || args.Offset == 0 {
 		reply.Success = true
 		offset := match + 1
 		if offset < len(args.Entries) { // in case args.Entries is empty
-			rf.logs.Trim(index(offset) - 1).AddLogs(args.Entries[offset:])
-			rf.tracer.Debugf("copy logs: new=%#v", args.Entries[offset:])
+			rf.logs.Trim(_fromLogIndex(match)).AddLogs(args.Entries[offset:])
 			rf.persist()
 		}
-		reply.Next = index(len(args.Entries))
-		rf.commit(min(args.LeaderCommit, index(len(args.Entries)-1)), true)
+		reply.Next = _fromLogIndex(len(args.Entries))
+		rf.commit(min(args.LeaderCommit, _fromLogIndex(len(args.Entries)-1)), true)
 	} else {
+		// no log matched, no snapshot
 		reply.Next = max(args.Offset-1, 0)
 	}
 }
@@ -474,7 +486,8 @@ func (rf *Raft) fillRequestVotesArgs() (int, RequestVoteArgs) {
 	return rf.electionCnt, args
 }
 
-func (rf *Raft) handleRequestVote(peer int, tracer *logrus.Entry, args RequestVoteArgs, voteCh chan struct{}, wg *sync.WaitGroup) {
+func (rf *Raft) handleRequestVote(peer int, tracer *logrus.Entry, args RequestVoteArgs,
+	voteCh chan struct{}, wg *sync.WaitGroup) {
 	var (
 		ok        = false
 		reply     RequestVoteReply

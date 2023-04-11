@@ -170,21 +170,50 @@ func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
 	rep.raft.mu.Lock()
 	defer rep.raft.mu.Unlock()
 
-	var ret GetLogsResult
+	if rep.status == matching {
+		return rep.fillRequestsMatching()
+	}
+	return rep.fillRequestsReplication()
+}
+
+func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
+	assert(rep.status == matching, "should in matching stage")
+
+	rep.nextIndex = max(rep.nextIndex, 0)
+	ret := rep.raft.logs.RetrieveBackward(rep.nextIndex, maxLogEntries)
+
+	if len(ret.Logs) == 0 && ret.Snapshot != nil {
+		// handle snapshot
+	}
+
 	args := AppendEntriesRequest{
 		Term:         rep.raft.currentTerm,
 		LeaderId:     rep.me,
 		LeaderCommit: rep.raft.commitIndex,
+		Offset:       ret.Start,
+		Entries:      ret.Logs,
 	}
-	if rep.status == matching {
-		rep.nextIndex = max(rep.nextIndex, 0)
-		ret = rep.raft.logs.RetrieveBackward(rep.nextIndex, maxLogEntries)
-	} else {
-		nextIndex := max(rep.nextIndex-1, 0)
-		ret = rep.raft.logs.RetrieveForward(nextIndex, maxLogEntries)
+	return args, true
+}
+
+func (rep *Replicator) fillRequestsReplication() (AppendEntriesRequest, bool) {
+	assert(rep.status == replicating, "should in replicating stage")
+
+	nextIndex := max(rep.nextIndex-1, 0)
+	ret := rep.raft.logs.RetrieveForward(nextIndex, maxLogEntries)
+
+	if ret.Snapshot != nil {
+		// handle snapshot
 	}
-	args.Offset = ret.Start
-	args.Entries = ret.Logs
+
+	args := AppendEntriesRequest{
+		Term:         rep.raft.currentTerm,
+		LeaderId:     rep.me,
+		LeaderCommit: rep.raft.commitIndex,
+		Offset:       ret.Start,
+		Entries:      ret.Logs,
+	}
+
 	if rep.nextIndex > rep.raft.logs.GetLastLogIndex() {
 		return args, false // no entry to append
 	}
