@@ -134,7 +134,10 @@ func (rf *Raft) persist() {
 
 // restore previously persisted state.
 func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
+	state := DefaultServiceState()
+	if data == nil || len(data) < 1 {
+		// bootstrap without any state?
+		rf.logs = NewLogService(rf, state, rf.tracer.WithField("role", "log service"))
 		return
 	}
 	// Your code here (2C).
@@ -152,7 +155,6 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
-	state := DefaultServiceState()
 
 	d.Decode(&rf.currentTerm)
 	d.Decode(&rf.voteFor)
@@ -162,8 +164,11 @@ func (rf *Raft) readPersist(data []byte) {
 	rf.logs = NewLogService(rf, state, rf.tracer.WithField("role", "log service"))
 	if rf.commitIndex >= 0 {
 		ret := rf.logs.RetrieveForward(0, rf.commitIndex)
+		if ret.Snapshot != nil {
+			// handle snapshot
+		}
 		rf.applier.Apply(ApplyRequest{
-			Start: 0,
+			Start: ret.Start,
 			Logs:  ret.Logs,
 		})
 	}
