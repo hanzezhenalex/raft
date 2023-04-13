@@ -163,7 +163,7 @@ func (rf *Raft) readPersist(data []byte) {
 
 	rf.logs = NewLogService(rf, state, rf.tracer.WithField("role", "log service"))
 	if rf.commitIndex >= 0 {
-		ret := rf.logs.RetrieveForward(0, rf.commitIndex)
+		ret := rf.logs.Get(0, rf.commitIndex)
 		if ret.Snapshot != nil {
 			// handle snapshot
 		}
@@ -177,7 +177,7 @@ func (rf *Raft) readPersist(data []byte) {
 
 func (rf *Raft) printStatus(prefix string) {
 	status := fmt.Sprintf("term=%d, last log=%d, dcommitIndex=%d, lastApplied=%d, leader=%t",
-		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.lastApplied, rf.isLeader)
+		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.applier.lastApplied, rf.isLeader)
 	rf.tracer.Debugf("[%s]raft status: %s", prefix, status)
 }
 

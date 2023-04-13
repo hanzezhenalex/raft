@@ -114,7 +114,7 @@ func (ls *LogService) RetrieveForward(start int, length int) GetLogsResult {
 
 func (ls *LogService) RetrieveBackward(end int, length int) GetLogsResult {
 	start := max(end-length+1, 0)
-	end = min(end, ls.store.Length())
+	end = min(end, ls.store.Length()-1)
 	return ls.store.Get(start, end)
 }
 

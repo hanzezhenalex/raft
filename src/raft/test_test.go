@@ -708,6 +708,7 @@ func TestPersist12C(t *testing.T) {
 
 	cfg.begin("Test (2C): basic persistence")
 
+	DPrintf("one 11")
 	cfg.one(11, servers, true)
 
 	// crash and re-Offset all
@@ -719,16 +720,20 @@ func TestPersist12C(t *testing.T) {
 		cfg.connect(i)
 	}
 
+	DPrintf("one 12")
 	cfg.one(12, servers, true)
 
 	leader1 := cfg.checkOneLeader()
+	DPrintf("disconnect & reconnect leader, leader id=%d", leader1)
 	cfg.disconnect(leader1)
 	cfg.start1(leader1, cfg.applier)
 	cfg.connect(leader1)
 
+	DPrintf("one 13")
 	cfg.one(13, servers, true)
 
 	leader2 := cfg.checkOneLeader()
+	DPrintf("disconnect & reconnect leader, leader id=%d", leader2)
 	cfg.disconnect(leader2)
 	cfg.one(14, servers-1, true)
 	cfg.start1(leader2, cfg.applier)
@@ -737,11 +742,16 @@ func TestPersist12C(t *testing.T) {
 	cfg.wait(3, servers, -1) // wait for leader2 to join before killing i3
 
 	i3 := (cfg.checkOneLeader() + 1) % servers
+	DPrintf("disconnect peer, peer id=%d", i3)
 	cfg.disconnect(i3)
+
+	DPrintf("one 15")
 	cfg.one(15, servers-1, true)
+	DPrintf("restart peer, peer id=%d", i3)
 	cfg.start1(i3, cfg.applier)
 	cfg.connect(i3)
 
+	DPrintf("one 16")
 	cfg.one(16, servers, true)
 
 	cfg.end()
