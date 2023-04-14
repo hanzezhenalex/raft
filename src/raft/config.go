@@ -170,7 +170,7 @@ func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 				err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
 			}
 			if err_msg != "" {
-				log.Fatalf("apply error: %v", err_msg)
+				Fatalf("apply error: %v", err_msg)
 				cfg.applyErr[i] = err_msg
 				// keep reading after error so that Raft doesn't block
 				// holding locks...
@@ -182,7 +182,7 @@ func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 // returns "" or error string
 func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 	if snapshot == nil {
-		log.Fatalf("nil snapshot")
+		Fatalf("nil snapshot")
 		return "nil snapshot"
 	}
 	r := bytes.NewBuffer(snapshot)
@@ -191,7 +191,7 @@ func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 	var xlog []interface{}
 	if d.Decode(&lastIncludedIndex) != nil ||
 		d.Decode(&xlog) != nil {
-		log.Fatalf("snapshot decode error")
+		Fatalf("snapshot decode error")
 		return "snapshot Decode() error"
 	}
 	if index != -1 && index != lastIncludedIndex {
@@ -257,7 +257,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			// Ignore other types of ApplyMsg.
 		}
 		if err_msg != "" {
-			log.Fatalf("apply error: %v", err_msg)
+			Fatalf("apply error: %v", err_msg)
 			cfg.applyErr[i] = err_msg
 			// keep reading after error so that Raft doesn't block
 			// holding locks...

@@ -142,7 +142,6 @@ type Replicator struct {
 	// matching:    next log entry to append
 	// replicating: next log entry try to match
 	nextIndex int
-	logs      []Log
 
 	callback        func()
 	stopped         chan struct{}
@@ -169,32 +168,53 @@ func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus
 // init nextIndex = len(rf.logs) - 1 => try to append the last log
 func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
 	rep.raft.mu.Lock()
-	currentTerm := rep.raft.currentTerm
-	commitIndex := rep.raft.commitIndex
-	rep.logs = rep.raft.logs // update logs
-	rep.raft.mu.Unlock()
-
-	args := AppendEntriesRequest{
-		Term:         currentTerm,
-		LeaderId:     rep.me,
-		LeaderCommit: commitIndex,
-	}
+	defer rep.raft.mu.Unlock()
 
 	if rep.status == matching {
-		rep.nextIndex = max(rep.nextIndex, 0)
-		args.Offset = max(rep.nextIndex-maxLogEntries+1, 0)
-		args.Entries = rep.logs[args.Offset : rep.nextIndex+1]
-	} else {
-		args.Offset = max(rep.nextIndex-1, 0)
-		end := args.Offset + maxLogEntries
-		if end > len(rep.logs) {
-			end = len(rep.logs)
-		}
-		args.Entries = make([]Log, 0, end-args.Offset+1)
-		args.Entries = append(args.Entries, Log{Term: rep.raft.logs[args.Offset].Term})
-		args.Entries = append(args.Entries, rep.logs[args.Offset+1:end]...) // [ -> )
+		return rep.fillRequestsMatching()
 	}
-	if rep.nextIndex >= len(rep.logs) {
+	return rep.fillRequestsReplication()
+}
+
+func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
+	assert(rep.status == matching, "should in matching stage")
+
+	rep.nextIndex = max(rep.nextIndex, 0)
+	ret := rep.raft.logs.RetrieveBackward(rep.nextIndex, maxLogEntries)
+
+	if len(ret.Logs) == 0 && ret.Snapshot != nil {
+		// handle snapshot
+	}
+
+	args := AppendEntriesRequest{
+		Term:         rep.raft.currentTerm,
+		LeaderId:     rep.me,
+		LeaderCommit: rep.raft.commitIndex,
+		Offset:       ret.Start,
+		Entries:      ret.Logs,
+	}
+	return args, true
+}
+
+func (rep *Replicator) fillRequestsReplication() (AppendEntriesRequest, bool) {
+	assert(rep.status == replicating, "should in replicating stage")
+
+	nextIndex := max(rep.nextIndex-1, 0)
+	ret := rep.raft.logs.RetrieveForward(nextIndex, maxLogEntries)
+
+	if ret.Snapshot != nil {
+		// handle snapshot
+	}
+
+	args := AppendEntriesRequest{
+		Term:         rep.raft.currentTerm,
+		LeaderId:     rep.me,
+		LeaderCommit: rep.raft.commitIndex,
+		Offset:       ret.Start,
+		Entries:      ret.Logs,
+	}
+
+	if rep.nextIndex > rep.raft.logs.GetLastLogIndex() {
 		return args, false // no entry to append
 	}
 	return args, true

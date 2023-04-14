@@ -13,12 +13,12 @@ var tracer = logrus.WithField("test", "test")
 
 func makeRaft(n int) *Raft {
 	raft := &Raft{
-		logs:      make([]Log, 0, n),
 		tracer:    tracer,
 		persister: MakePersister(),
 	}
+	raft.logs = NewLogService(raft, DefaultServiceState(), tracer)
 	for i := 0; i < n; i++ {
-		raft.logs = append(raft.logs, Log{i, fmt.Sprintf("%d", i)})
+		raft.logs.AddLogs([]Log{{i, fmt.Sprintf("%d", i)}})
 	}
 	return raft
 }
@@ -45,7 +45,7 @@ func TestReplicator_fillAppendEntries_matching(t *testing.T) {
 	for _, c := range matchingCases {
 		t.Run(c.name, func(t *testing.T) {
 			raft := makeRaft(c.logs)
-			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, len(raft.logs)-1)
+			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, raft.logs.GetLastLogIndex())
 			defer rep.stop()
 
 			args, hasEntryToAppend := rep.fillAppendEntries()
@@ -268,7 +268,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 			raft.tryAppendEntries(c.args, &reply)
 
 			rq.Equal(c.expectedReply, reply)
-			rq.Equal(c.expectedRaftLogs, len(raft.logs))
+			rq.Equal(c.expectedRaftLogs, raft.logs.GetLastLogIndex()+1)
 		})
 	}
 }
@@ -277,19 +277,20 @@ func Test_AppendEntries(t *testing.T) {
 	rq := require.New(t)
 	rf1 := makeRaft(4 * maxLogEntries)
 	ch := make(chan received, 10)
-	rep := NewReplicator(1, 0, nil, rf1, tracer, ch, func() {}, len(rf1.logs)-1)
+	rep := NewReplicator(1, 0, nil, rf1, tracer, ch, func() {}, rf1.logs.GetLastLogIndex())
 
 	rf2 := Raft{
-		logs: []Log{
-			{Term: 3, Command: "3"},
-			{Term: 4, Command: "4"},
-			{Term: 5, Command: "5"},
-			{Term: 6, Command: "6"},
-			{Term: 7, Command: "7"},
-		},
 		tracer:    tracer,
 		persister: MakePersister(),
 	}
+	rf2.logs = NewLogService(&rf2, DefaultServiceState(), tracer)
+	rf2.logs.AddLogs([]Log{
+		{Term: 3, Command: "3"},
+		{Term: 4, Command: "4"},
+		{Term: 5, Command: "5"},
+		{Term: 6, Command: "6"},
+		{Term: 7, Command: "7"},
+	})
 
 	for {
 		args, ok := rep.fillAppendEntries()
@@ -302,7 +303,7 @@ func Test_AppendEntries(t *testing.T) {
 		rep.handleReply(args, &reply)
 	}
 
-	rq.True(reflect.DeepEqual(rf1.logs, rf2.logs))
+	rq.True(reflect.DeepEqual(rf1.logs.lastLogIndex, rf2.logs.lastLogIndex))
 
 	// check commit
 	for r := range ch {

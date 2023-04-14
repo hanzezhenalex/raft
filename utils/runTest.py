@@ -1,13 +1,15 @@
+from io import StringIO
 import subprocess
 import datetime
 import os
 import argparse
+import tempfile
 from colorama import Fore
 
 CWD = "../src/raft"
 LOG_PATH = "./logs"
 TIME_FORMAT = "%Y-%m-%dT%H-%M-%S"
-MAX_FAILURE_TIME_SINGEL = 1
+MAX_FAILURE_TIME_SINGLE = 1
 
 TestSuites = {
     "2A": ["TestInitialElection2A", "TestReElection2A", "TestManyElections2A"],
@@ -116,8 +118,13 @@ logger = Logger()
 @logger.runOneTest
 def runTest(testCase: str):
     command = "go test -run {} -timeout 120s".format(testCase)
+
+    out_temp = tempfile.TemporaryFile(mode='w+')
+    fileno = out_temp.fileno()
+
     process = subprocess.Popen(
-        command, shell=True, cwd=CWD, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        command, shell=True, cwd=CWD, stdout=fileno, stderr=fileno)
+
     process.wait()
 
     if process.returncode != 0:
@@ -128,10 +135,11 @@ def runTest(testCase: str):
                               datetime.datetime.now().strftime(TIME_FORMAT))
 
         with open(file, "w+", encoding="utf-8") as f:
-            f.write(process.stdout.read().decode(encoding="gbk"))
-            f.write("\r\n")
-            f.write(process.stderr.read().decode(encoding="gbk"))
+            out_temp.seek(0)
+            f.write(out_temp.read())
         return False
+
+    out_temp.close()
 
     return True
 
@@ -150,8 +158,8 @@ class FixedRoundRunner:
                 if not ret:
                     failures += 1
                     self.totalFailure += 1
-                    if failures >= MAX_FAILURE_TIME_SINGEL:
-                        print("abort, failues greater than MAX_FAILURE_TIME_SINGEL")
+                    if failures >= MAX_FAILURE_TIME_SINGLE:
+                        print("abort, failues greater than MAX_FAILURE_TIME_SINGLE")
                         return
 
 
