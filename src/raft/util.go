@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	"fmt"
+	"os"
 
 	"github.com/sirupsen/logrus"
 )
@@ -52,3 +53,8 @@ func assert(cond bool, format string, args ...interface{}) {
 	}
 }
 
+func Fatalf(format string, msg ...interface{}) {
+	_, _ = fmt.Fprintf(os.Stderr, format, msg...)
+	fmt.Print(logBuffer.String())
+	os.Exit(1)
+}
