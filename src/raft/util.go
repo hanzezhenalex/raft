@@ -1,20 +1,35 @@
 package raft
 
 import (
+	"bytes"
 	"fmt"
+
 	"github.com/sirupsen/logrus"
 )
 
-// Debugging
-var Debug bool
+var (
+	noOpCommand = "no-op"
 
-var noOpCommand = "no-op"
+	logBuffer = new(bytes.Buffer)
+)
 
 func init() {
-	Debug = false
-	logrus.SetLevel(logrus.FatalLevel)
+	logrus.SetLevel(logrus.DebugLevel)
+	logrus.SetOutput(logBuffer)
+}
 
-	//enableDebug()
+func DPrintf(format string, a ...interface{}) {
+	printf := func(format string, a ...interface{}) {
+		_, _ = fmt.Fprintf(logBuffer, format, a...)
+	}
+	printBounder := func() {
+		_, _ = fmt.Fprintln(logBuffer, "====================================================")
+
+	}
+
+	printBounder()
+	printf(format, a...)
+	printBounder()
 }
 
 func max(a, b int) int {
@@ -29,15 +44,4 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func enableDebug() {
-	Debug = true
-	logrus.SetLevel(logrus.DebugLevel)
-}
-
-func DPrintf(format string, a ...interface{}) {
-	if Debug {
-		fmt.Printf(format, a...)
-	}
 }
