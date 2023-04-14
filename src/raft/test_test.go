@@ -9,6 +9,7 @@ package raft
 //
 
 import (
+	"os"
 	"testing"
 )
 import "fmt"
@@ -1298,4 +1299,14 @@ func TestSnapshotInit2D(t *testing.T) {
 	// do another op to trigger potential bug
 	cfg.one(rand.Int(), servers, true)
 	cfg.end()
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+
+	if code > 0 {
+		fmt.Print(logBuffer.String())
+	}
+
+	os.Exit(code)
 }
