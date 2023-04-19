@@ -1,7 +1,5 @@
-name: 'raft tests'
-on: 
-  push:
-  pull_request:
+name: 'push-val'
+on: [push, pull_request]
   
 jobs:
   branch:
@@ -10,6 +8,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
   raft-tests:
+    needs: branch
     runs-on: ubuntu-latest
     steps:
     - name: 2A
@@ -19,7 +18,8 @@ jobs:
     - name: 2C
       run: python ./utils/runTest.py 2C -r 10
   self-made-unit-tests:
-    runs-on: go
+    needs: branch
+    runs-on: ubuntu-latest
     steps:
     - name: cd
       run: cd ./src/raft
