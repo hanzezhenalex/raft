@@ -8,22 +8,22 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v2
     - name: 2A
-      run: python ./utils/runTest.py -t 2A -r 5
+      run: python -u ./utils/runTest.py -t 2A -r 5
   raft-2B:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
       - name: 2B
-        run: python ./utils/runTest.py -t 2B -r 5
+        run: python -u ./utils/runTest.py -t 2B -r 5
   raft-2C:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
       - name: 2C
-        run: python ./utils/runTest.py -t 2C -r 5
-  self-made-unit-tests:
+        run: python -u ./utils/runTest.py -t 2C -r 5
+  unit-test:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
