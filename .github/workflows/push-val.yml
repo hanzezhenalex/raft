@@ -1,16 +1,13 @@
 name: 'push-val'
-on: [push, pull_request]
+on: push
   
 jobs:
-  branch:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
   raft-tests:
     needs: branch
     runs-on: ubuntu-latest
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
     - name: 2A
       run: python ./utils/runTest.py 2A -r 10
     - name: 2B
@@ -21,6 +18,8 @@ jobs:
     needs: branch
     runs-on: ubuntu-latest
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
     - name: cd
       run: cd ./src/raft
     - name: replication
