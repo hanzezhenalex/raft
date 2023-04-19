@@ -1,0 +1,34 @@
+name: 'raft tests'
+on: 
+  push:
+  pull_request:
+  
+jobs:
+  branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+  raft-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 2A
+      run: python ./utils/runTest.py 2A -r 10
+    - name: 2B
+      run: python ./utils/runTest.py 2B -r 10
+    - name: 2C
+      run: python ./utils/runTest.py 2C -r 10
+  self-made-unit-tests:
+    runs-on: go
+    steps:
+    - name: cd
+      run: cd ./src/raft
+    - name: replication
+      run: go test -run Replicator
+    - name: logService
+      run: go test -run LogService
+    - name: logStore
+      run: go test -run Store
+    - name: applier
+      run: go test -run Applier
+    
