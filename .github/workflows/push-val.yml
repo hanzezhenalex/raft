@@ -7,27 +7,23 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
-    - name: cd
-      run: cd ./utils
     - name: 2A
-      run: python runTest.py -t 2A -r 10
+      run: python ./utils/runTest.py -t 2A -r 10
     - name: 2B
-      run: python runTest.py -t 2B -r 10
+      run: python ./utils/runTest.py -t 2B -r 10
     - name: 2C
-      run: python runTest.py -t 2C -r 10
+      run: python./utils/ runTest.py -t 2C -r 10
   self-made-unit-tests:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
-    - name: cd
-      run: cd ./src/raft
     - name: replication
-      run: go test -run Replicator
+      run: cd ./src/raft && go test -run Replicator
     - name: logService
-      run: go test -run LogService
+      run: cd ./src/raft && go test -run LogService
     - name: logStore
-      run: go test -run Store
+      run: cd ./src/raft && go test -run Store
     - name: applier
-      run: go test -run Applier
+      run: cd ./src/raft && go test -run Applier
     

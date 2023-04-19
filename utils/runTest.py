@@ -6,7 +6,7 @@ import argparse
 import tempfile
 from colorama import Fore
 
-CWD = "../src/raft"
+CWD = "./src/raft"
 LOG_PATH = "./logs"
 TIME_FORMAT = "%Y-%m-%dT%H-%M-%S"
 MAX_FAILURE_TIME_SINGLE = 1
