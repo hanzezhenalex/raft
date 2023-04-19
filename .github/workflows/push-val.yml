@@ -2,20 +2,32 @@ name: 'push-val'
 on: push
   
 jobs:
-  raft-tests:
+  raft-2A:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
     - name: 2A
-      run: python ./utils/runTest.py -t 2A -r 10
-    - name: 2B
-      run: python ./utils/runTest.py -t 2B -r 10
-    - name: 2C
-      run: python./utils/ runTest.py -t 2C -r 10
+      run: python ./utils/runTest.py -t 2A -r 5
+  raft-2B:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: 2B
+        run: python ./utils/runTest.py -t 2B -r 5
+  raft-2C:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: 2C
+        run: python./utils/ runTest.py -t 2C -r 5
   self-made-unit-tests:
     runs-on: ubuntu-latest
     steps:
+    - name: applier
+      run: cd ./src/raft && go test -run Applier
     - name: Checkout repository
       uses: actions/checkout@v2
     - name: replication
@@ -24,6 +36,5 @@ jobs:
       run: cd ./src/raft && go test -run LogService
     - name: logStore
       run: cd ./src/raft && go test -run Store
-    - name: applier
-      run: cd ./src/raft && go test -run Applier
+
     
