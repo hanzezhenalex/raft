@@ -22,14 +22,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
       - name: 2C
-        run: python./utils/ runTest.py -t 2C -r 5
+        run: python ./utils/runTest.py -t 2C -r 5
   self-made-unit-tests:
     runs-on: ubuntu-latest
     steps:
-    - name: applier
-      run: cd ./src/raft && go test -run Applier
     - name: Checkout repository
       uses: actions/checkout@v2
+    - name: applier
+      run: cd ./src/raft && go test -run Applier
     - name: replication
       run: cd ./src/raft && go test -run Replicator
     - name: logService
