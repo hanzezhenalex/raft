@@ -254,6 +254,17 @@ func (rep *Replicator) update() {
 			return
 		}
 
+		rep.raft.mu.Lock()
+		if rep.raft.currentTerm < args.Term {
+			rep.tracer.Debugf("term behind peer, convert to follower, current term=%d, args term=%d", rep.raft.currentTerm, args.Term)
+			rep.raft.stopLeader()
+			rep.raft.voteFor = -1
+			rep.raft.currentTerm = args.Term
+			rep.raft.mu.Unlock()
+			return
+		}
+		rep.raft.mu.Unlock()
+
 		rep.handleReply(args, &reply)
 	}
 }
@@ -282,8 +293,6 @@ func (rep *Replicator) handleReply(args AppendEntriesRequest, reply *AppendEntri
 			rep.status = matching
 		}
 	}
-	// update term if needed
-	rep.raft.updateTerm(reply.Term, false)
 }
 
 func (rep *Replicator) stop() {

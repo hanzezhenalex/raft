@@ -225,6 +225,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.currentTerm {
 		rf.updateTerm(args.Term, true)
 		rf.voteFor = -1
+		rf.stopLeader()
 	}
 
 	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) &&
@@ -375,6 +376,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	// 1) log matches, index = match, append at match+1
 	// 2) snapshot exists, match = last snapshot index, append at match+1
 	if match >= 0 || args.Offset == 0 {
+		rf.tracer.Debugf("log matched, index=%d", match)
 		reply.Success = true
 		offset := match + 1
 		if offset < len(args.Entries) { // in case args.Entries is empty
