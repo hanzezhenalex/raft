@@ -8,11 +8,11 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v2
     - name: 2A
-      run: python ./utils/runTest.py 2A -r 10
+      run: python ./utils/runTest.py -t 2A -r 10
     - name: 2B
-      run: python ./utils/runTest.py 2B -r 10
+      run: python ./utils/runTest.py -t 2B -r 10
     - name: 2C
-      run: python ./utils/runTest.py 2C -r 10
+      run: python ./utils/runTest.py -t 2C -r 10
   self-made-unit-tests:
     runs-on: ubuntu-latest
     steps:
