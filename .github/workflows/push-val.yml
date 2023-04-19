@@ -3,7 +3,6 @@ on: push
   
 jobs:
   raft-tests:
-    needs: branch
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
@@ -15,7 +14,6 @@ jobs:
     - name: 2C
       run: python ./utils/runTest.py 2C -r 10
   self-made-unit-tests:
-    needs: branch
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
