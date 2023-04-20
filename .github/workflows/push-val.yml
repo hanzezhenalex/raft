@@ -4,25 +4,43 @@ on: push
 jobs:
   raft-2A:
     runs-on: ubuntu-latest
+    env:
+      HEAD_REF: ${{ github.head_ref }}
+      SHA: ${{ github.sha }}
+      USERNAME: ${{ secrets.USENAME }}
+      SERVER: ${{ secrets.SERVER }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
     - name: 2A
-      run: python -u ./utils/runTest.py -t 2A -r 5 || sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secrets.USENAME }} ${{ secrets.SERVER }} ${{ secrets.SSH_KEY }}
+      run: python -u ./utils/runTest.py -t 2A -r 5 || sh ./utils/upload.sh
   raft-2B:
     runs-on: ubuntu-latest
+    env:
+      HEAD_REF: ${{ github.head_ref }}
+      SHA: ${{ github.sha }}
+      USERNAME: ${{ secrets.USENAME }}
+      SERVER: ${{ secrets.SERVER }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
       - name: 2B
-        run: python -u ./utils/runTest.py -t 2B -r 5 || sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secrets.USENAME }} ${{ secrets.SERVER }} ${{ secrets.SSH_KEY }}
+        run: python -u ./utils/runTest.py -t 2B -r 5 || sh ./utils/upload.sh
   raft-2C:
     runs-on: ubuntu-latest
+    env:
+      HEAD_REF: ${{ github.head_ref }}
+      SHA: ${{ github.sha }}
+      USERNAME: ${{ secrets.USENAME }}
+      SERVER: ${{ secrets.SERVER }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
       - name: 2C
-        run: python -u ./utils/runTest.py -t 2C -r 5 || sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secrets.USENAME }} ${{ secrets.SERVER }} ${{ secrets.SSH_KEY }}
+        run: python -u ./utils/runTest.py -t 2C -r 5 || sh ./utils/upload.sh
   unit-test:
     runs-on: ubuntu-latest
     steps:

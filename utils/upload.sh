@@ -1,11 +1,5 @@
 #!/bin/sh
 
-HEAD_REF=$1 # ${{ github.head_ref }}
-SHA=$2 # ${{ github.sha }}
-USENAME=$3
-SERVER=$4
-SSH_KEY=$5
-
 transferToHTML() {
     basePath=$1
 
@@ -32,6 +26,8 @@ if [ -d "${LOG_PATH}" ];then
   echo $SSH_KEY | tr -d '\r' > $PEM_FILE
   chmod 400 $PEM_FILE
 
-  scp -i $PEM_FILE -r $LOG_PATH "${USENAME}"@"${SERVER}":/tmp/push-val/"$HEAD_REF"."$SHA"
+  scp -i $PEM_FILE -r $LOG_PATH "${USERNAME}"@"${SERVER}":/tmp/push-val/"$HEAD_REF"."$SHA"
+
+  exit 1
 fi
 
