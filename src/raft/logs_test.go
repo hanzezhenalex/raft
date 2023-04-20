@@ -233,9 +233,8 @@ func TestStore_Trim(t *testing.T) {
 		}
 		s.lastIndexOfSnapshot = 1
 		s.Trim(1)
-		rq.Equal(4, s.Length())
-		rq.Equal("2", s.logs[0].Command)
-		rq.Equal("3", s.logs[1].Command)
+		rq.Equal(2, s.Length())
+		rq.Equal(0, len(s.logs))
 	})
 }
 

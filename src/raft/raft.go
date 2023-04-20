@@ -325,7 +325,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 		reply.Term = rf.currentTerm
 	}()
 
-	if args.Term < rf.currentTerm || args.LeaderCommit < rf.commitIndex {
+	if args.Term < rf.currentTerm {
 		rf.tracer.Debugf("AppendEntry rejected")
 		reply.Next = args.Offset + len(args.Entries) - 1
 		return
