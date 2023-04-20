@@ -9,7 +9,7 @@ transferToHTML() {
         then
             transferToHTML $file
         else
-            python ./utils/LogExplore.py --log $file --out $file.html
+            python ./utils/logExplore.py --log $file --out $file.html
             rm $file
         fi
     done

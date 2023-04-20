@@ -7,7 +7,7 @@ jobs:
     env:
       HEAD_REF: ${{ github.head_ref }}
       SHA: ${{ github.sha }}
-      USERNAME: ${{ secrets.USENAME }}
+      USERNAME: ${{ secrets.USERNAME }}
       SERVER: ${{ secrets.SERVER }}
       SSH_KEY: ${{ secrets.SSH_KEY }}
     steps:
@@ -20,7 +20,7 @@ jobs:
     env:
       HEAD_REF: ${{ github.head_ref }}
       SHA: ${{ github.sha }}
-      USERNAME: ${{ secrets.USENAME }}
+      USERNAME: ${{ secrets.USERNAME }}
       SERVER: ${{ secrets.SERVER }}
       SSH_KEY: ${{ secrets.SSH_KEY }}
     steps:
@@ -33,7 +33,7 @@ jobs:
     env:
       HEAD_REF: ${{ github.head_ref }}
       SHA: ${{ github.sha }}
-      USERNAME: ${{ secrets.USENAME }}
+      USERNAME: ${{ secrets.USERNAME }}
       SERVER: ${{ secrets.SERVER }}
       SSH_KEY: ${{ secrets.SSH_KEY }}
     steps:
