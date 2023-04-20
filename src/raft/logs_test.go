@@ -331,6 +331,7 @@ func TestLogService_Retrieve(t *testing.T) {
 
 	// test 1: backward
 	mockStore.EXPECT().Get(2, 4).Times(1)
+	mockStore.EXPECT().Length().Return(100).Times(1)
 	ls.RetrieveBackward(4, 3)
 
 	// test 2: forward
@@ -351,8 +352,8 @@ func TestLogService_Trim(t *testing.T) {
 	ls.store = mockStore
 
 	// test 1: removed contains noop
-	mockStore.EXPECT().Length().Return(13).Times(2)
-	mockStore.EXPECT().Get(11, -1).Return(GetLogsResult{
+	mockStore.EXPECT().Length().Return(13).Times(3)
+	mockStore.EXPECT().Get(11, 12).Return(GetLogsResult{
 		Start: 11,
 		Logs: []Log{
 			{Command: 11}, {Command: noOpCommand},
@@ -373,8 +374,8 @@ func TestLogService_Trim(t *testing.T) {
 	rq.Equal(0, ls.noOp)
 
 	// test 2: last log in snapshot
-	mockStore.EXPECT().Length().Return(3).Times(2)
-	mockStore.EXPECT().Get(1, -1).Return(GetLogsResult{
+	mockStore.EXPECT().Length().Return(3).Times(3)
+	mockStore.EXPECT().Get(1, 2).Return(GetLogsResult{
 		Start: 1,
 		Logs: []Log{
 			{Command: 1}, {Command: 2},
