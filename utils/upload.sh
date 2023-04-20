@@ -25,15 +25,13 @@ LOG_PATH="./logs"
 
 if [ -d "${LOG_PATH}" ];then
   echo "start uploading logs..."
-else
-  echo "no logs, exit"
-  exit 0
+
+  transferToHTML $LOG_PATH
+
+  PEM_FILE="key.pem"
+  echo $SSH_KEY | tr -d '\r' > $PEM_FILE
+  chmod 400 $PEM_FILE
+
+  scp -i $PEM_FILE -r $LOG_PATH "${USENAME}"@"${SERVER}":/tmp/push-val/"$HEAD_REF"."$SHA"
 fi
 
-transferToHTML $LOG_PATH
-
-PEM_FILE="key.pem"
-echo $SSH_KEY | tr -d '\r' > $PEM_FILE
-chmod 400 $PEM_FILE
-
-scp -i $PEM_FILE -r $LOG_PATH "${USENAME}"@"${SERVER}":/tmp/push-val/"$HEAD_REF"."$SHA"
