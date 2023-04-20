@@ -6,7 +6,7 @@ import argparse
 import tempfile
 from colorama import Fore
 
-CWD = "../src/raft"
+CWD = "./src/raft"
 LOG_PATH = "./logs"
 TIME_FORMAT = "%Y-%m-%dT%H-%M-%S"
 MAX_FAILURE_TIME_SINGLE = 1
@@ -107,7 +107,7 @@ class Logger:
             categoryRecord.add(record)
             categoryRecords[category] = categoryRecord
 
-        print("test finish running reports: ")
+        print("test finish running, reports: ")
         for c in categoryRecords.values():
             c.print()
 
@@ -160,7 +160,7 @@ class FixedRoundRunner:
                     self.totalFailure += 1
                     if failures >= MAX_FAILURE_TIME_SINGLE:
                         print("abort, failues greater than MAX_FAILURE_TIME_SINGLE")
-                        return
+                        continue
 
 
 def parse_args():
