@@ -23,9 +23,10 @@ if [ -d "${LOG_PATH}" ];then
   transferToHTML $LOG_PATH
 
   PEM_FILE="key.pem"
-  echo $SSH_KEY | tr -d '\r\n' > $PEM_FILE
+  echo $SSH_KEY | tr -d '\r' > $PEM_FILE
   chmod 400 $PEM_FILE
 
+  cat $PEM_FILE
 
   scp -i $PEM_FILE -o StrictHostKeyChecking=no -r $LOG_PATH "${USERNAME}"@"${SERVER}":/tmp/push-val/"$HEAD_REF"."$SHA"
 
