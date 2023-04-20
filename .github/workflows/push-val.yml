@@ -10,7 +10,7 @@ jobs:
     - name: 2A
       run: python -u ./utils/runTest.py -t 2A -r 5
     - name: upload logs
-      run: sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secret.USENAME }} ${{ secret.SERVER }} ${{ secret.SSH_KEY }}
+      run: sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secrets.USENAME }} ${{ secrets.SERVER }} ${{ secrets.SSH_KEY }}
   raft-2B:
     runs-on: ubuntu-latest
     steps:
@@ -19,7 +19,7 @@ jobs:
       - name: 2B
         run: python -u ./utils/runTest.py -t 2B -r 5
       - name: upload logs
-        run: sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secret.USENAME }} ${{ secret.SERVER }} ${{ secret.SSH_KEY }}
+        run: sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secrets.USENAME }} ${{ secrets.SERVER }} ${{ secrets.SSH_KEY }}
   raft-2C:
     runs-on: ubuntu-latest
     steps:
@@ -28,7 +28,7 @@ jobs:
       - name: 2C
         run: python -u ./utils/runTest.py -t 2C -r 5
       - name: upload logs
-        run: sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secret.USENAME }} ${{ secret.SERVER }} ${{ secret.SSH_KEY }}
+        run: sh ./utils/upload.sh ${{ github.head_ref }} ${{ github.sha }} ${{ secrets.USENAME }} ${{ secrets.SERVER }} ${{ secrets.SSH_KEY }}
   unit-test:
     runs-on: ubuntu-latest
     steps:
