@@ -199,6 +199,17 @@ func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
 func (rep *Replicator) fillRequestsReplication() (AppendEntriesRequest, bool) {
 	assert(rep.status == replicating, "should in replicating stage")
 
+	args := AppendEntriesRequest{
+		Term:         rep.raft.currentTerm,
+		LeaderId:     rep.me,
+		LeaderCommit: rep.raft.commitIndex,
+	}
+
+	if rep.nextIndex > rep.raft.logs.GetLastLogIndex() {
+		args.Offset = rep.nextIndex
+		return args, false // no entry to append
+	}
+
 	nextIndex := max(rep.nextIndex-1, 0)
 	ret := rep.raft.logs.RetrieveForward(nextIndex, maxLogEntries)
 
@@ -206,17 +217,9 @@ func (rep *Replicator) fillRequestsReplication() (AppendEntriesRequest, bool) {
 		// handle snapshot
 	}
 
-	args := AppendEntriesRequest{
-		Term:         rep.raft.currentTerm,
-		LeaderId:     rep.me,
-		LeaderCommit: rep.raft.commitIndex,
-		Offset:       ret.Start,
-		Entries:      ret.Logs,
-	}
+	args.Offset = ret.Start
+	args.Entries = ret.Logs
 
-	if rep.nextIndex > rep.raft.logs.GetLastLogIndex() {
-		return args, false // no entry to append
-	}
 	return args, true
 }
 

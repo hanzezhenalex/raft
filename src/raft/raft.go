@@ -342,6 +342,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	if len(args.Entries) == 0 {
 		reply.Success = true
 		reply.Next = args.Offset
+		rf.commit(args.LeaderCommit, true)
 		return
 	}
 
