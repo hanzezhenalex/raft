@@ -21,11 +21,8 @@ LOG_PATH="./logs"
 
 if [ -d "${LOG_PATH}" ];then
   echo "start uploading logs..."
-
   transferToHTML $LOG_PATH
-
   sshpass -p "${SSH_PASSWD}" scp -r $LOG_PATH "${USERNAME}"@"${SERVER}":/tmp/push-val/"$HEAD_REF"."$SHA"
-
   exit 1
 fi
 
