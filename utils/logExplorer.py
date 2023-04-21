@@ -44,8 +44,8 @@ def createEntry(msg: str):
         time = res.group(1)
         log = res.group(3)+res.group(2)+res.group(5)
     except Exception as e:
-        print("msg= {}".format(msg))
-        raise e
+        print("wrong entry detected, msg= {}".format(msg))
+        return DebugLogEntry(msg), -1
 
     return RoleLogEntry(time, id, log), id
 
