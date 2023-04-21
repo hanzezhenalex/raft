@@ -564,14 +564,14 @@ func (rf *Raft) election() {
 }
 
 func (rf *Raft) transferToLeader() {
+	subTracer := rf.tracer.WithField("Term", rf.currentTerm)
+	subTracer.Debug("change to leader, start heart beat")
+
 	rf.isLeader = true
 	rf.voteFor = -1
 	rf.logs.AddCommand(noOpCommand)
-	go func() {
-		subTracer := rf.tracer.WithField("Term", rf.currentTerm)
-		subTracer.Debug("change to leader, start heart beat")
-		rf.replicationService = NewReplicationService(rf, rf.logs.GetLastLogIndex())
-	}()
+	rf.replicationService = NewReplicationService(rf, rf.logs.GetLastLogIndex())
+
 	rf.persist()
 	rf.resetTimer()
 }

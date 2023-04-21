@@ -137,6 +137,7 @@ type Replicator struct {
 	peer   *labrpc.ClientEnd
 	raft   *Raft
 	tracer *logrus.Entry
+	term   int
 
 	status replicatorStatus
 	// matching:    next log entry to append
@@ -161,6 +162,7 @@ func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus
 		reportSendIndex: reportSendIndex,
 		callback:        callback,
 		nextIndex:       nextIndex,
+		term:            raft.currentTerm,
 	}
 	return replicator
 }
@@ -187,7 +189,7 @@ func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
 	}
 
 	args := AppendEntriesRequest{
-		Term:         rep.raft.currentTerm,
+		Term:         rep.term,
 		LeaderId:     rep.me,
 		LeaderCommit: rep.raft.commitIndex,
 		Offset:       ret.Start,
@@ -257,16 +259,18 @@ func (rep *Replicator) update() {
 			return
 		}
 
-		rep.raft.mu.Lock()
-		if rep.raft.currentTerm < args.Term {
-			rep.tracer.Debugf("term behind peer, convert to follower, current term=%d, args term=%d", rep.raft.currentTerm, args.Term)
-			rep.raft.stopLeader()
-			rep.raft.voteFor = -1
-			rep.raft.currentTerm = args.Term
-			rep.raft.mu.Unlock()
+		if rep.term < args.Term {
+			go func() {
+				rep.tracer.Debugf("term behind peer, convert to follower, current term=%d, args term=%d", rep.raft.currentTerm, args.Term)
+				rep.raft.mu.Lock()
+				defer rep.raft.mu.Unlock()
+
+				rep.raft.stopLeader()
+				rep.raft.voteFor = -1
+				rep.raft.currentTerm = args.Term
+			}()
 			return
 		}
-		rep.raft.mu.Unlock()
 
 		rep.handleReply(args, &reply)
 	}
