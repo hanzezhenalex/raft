@@ -325,7 +325,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 		reply.Term = rf.currentTerm
 	}()
 
-	if args.Term < rf.currentTerm || args.LeaderCommit < rf.commitIndex {
+	if args.Term < rf.currentTerm {
 		rf.tracer.Debugf("AppendEntry rejected")
 		reply.Next = args.Offset + len(args.Entries) - 1
 		return
@@ -342,6 +342,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	if len(args.Entries) == 0 {
 		reply.Success = true
 		reply.Next = args.Offset
+		rf.commit(args.LeaderCommit, true)
 		return
 	}
 
@@ -563,14 +564,14 @@ func (rf *Raft) election() {
 }
 
 func (rf *Raft) transferToLeader() {
+	subTracer := rf.tracer.WithField("Term", rf.currentTerm)
+	subTracer.Debug("change to leader, start heart beat")
+
 	rf.isLeader = true
 	rf.voteFor = -1
 	rf.logs.AddCommand(noOpCommand)
-	go func() {
-		subTracer := rf.tracer.WithField("Term", rf.currentTerm)
-		subTracer.Debug("change to leader, start heart beat")
-		rf.replicationService = NewReplicationService(rf, rf.logs.GetLastLogIndex())
-	}()
+	rf.replicationService = NewReplicationService(rf, rf.logs.GetLastLogIndex())
+
 	rf.persist()
 	rf.resetTimer()
 }

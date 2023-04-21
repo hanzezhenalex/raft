@@ -15,6 +15,7 @@ func makeRaft(n int) *Raft {
 	raft := &Raft{
 		tracer:    tracer,
 		persister: MakePersister(),
+		applier:   NewApplier(1, nil, nil),
 	}
 	raft.logs = NewLogService(raft, DefaultServiceState(), tracer)
 	for i := 0; i < n; i++ {
@@ -66,7 +67,7 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 		{name: "half maxLogEntries", start: 0, length: maxLogEntries / 2, logs: maxLogEntries / 2, nextIndex: 0, hasEntryToAppend: true},
 		{name: "Offset from 3", start: 3, length: maxLogEntries/2 - 3, logs: maxLogEntries / 2, nextIndex: 4, hasEntryToAppend: true},
 		{name: "more than maxLogEntries", start: 3, length: maxLogEntries, logs: maxLogEntries * 2, nextIndex: 4, hasEntryToAppend: true},
-		{name: "no entry to append", start: 0, length: 1, logs: 1, nextIndex: 1, hasEntryToAppend: false},
+		{name: "no entry to append", start: 1, length: 0, logs: 1, nextIndex: 1, hasEntryToAppend: false},
 	}
 
 	for _, c := range replicatingCases {
@@ -282,6 +283,7 @@ func Test_AppendEntries(t *testing.T) {
 	rf2 := Raft{
 		tracer:    tracer,
 		persister: MakePersister(),
+		applier:   NewApplier(1, nil, nil),
 	}
 	rf2.logs = NewLogService(&rf2, DefaultServiceState(), tracer)
 	rf2.logs.AddLogs([]Log{
