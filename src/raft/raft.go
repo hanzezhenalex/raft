@@ -579,7 +579,7 @@ func (rf *Raft) stopLeader() {
 	rf.isLeader = false
 
 	if rf.replicationService != nil {
-		go rf.replicationService.stop()
+		rf.replicationService.stop()
 		rf.replicationService = nil
 	}
 }

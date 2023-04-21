@@ -257,9 +257,13 @@ func (rep *Replicator) update() {
 		rep.raft.mu.Lock()
 		if rep.raft.currentTerm < args.Term {
 			rep.tracer.Debugf("term behind peer, convert to follower, current term=%d, args term=%d", rep.raft.currentTerm, args.Term)
-			rep.raft.stopLeader()
-			rep.raft.voteFor = -1
-			rep.raft.currentTerm = args.Term
+			go func() {
+				rep.raft.mu.Lock()
+				rep.raft.stopLeader()
+				rep.raft.voteFor = -1
+				rep.raft.currentTerm = args.Term
+				rep.raft.mu.Unlock()
+			}()
 			rep.raft.mu.Unlock()
 			return
 		}
