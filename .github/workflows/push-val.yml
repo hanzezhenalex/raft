@@ -9,10 +9,12 @@ jobs:
       SHA: ${{ github.sha }}
       USERNAME: ${{ secrets.USERNAME }}
       SERVER: ${{ secrets.SERVER }}
-      SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_PASSWD: ${{ secrets.SSH_PASSWD }}
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+    - name: install sshpass
+      run: sudo apt-get install sshpass -y
     - name: 2A
       run: python -u ./utils/runTest.py -t 2A -r 5 || sh ./utils/upload.sh
   raft-2B:
@@ -22,10 +24,12 @@ jobs:
       SHA: ${{ github.sha }}
       USERNAME: ${{ secrets.USERNAME }}
       SERVER: ${{ secrets.SERVER }}
-      SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_PASSWD: ${{ secrets.SSH_PASSWD }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+      - name: install sshpass
+        run: sudo apt-get install sshpass -y
       - name: 2B
         run: python -u ./utils/runTest.py -t 2B -r 5 || sh ./utils/upload.sh
   raft-2C:
@@ -35,10 +39,12 @@ jobs:
       SHA: ${{ github.sha }}
       USERNAME: ${{ secrets.USERNAME }}
       SERVER: ${{ secrets.SERVER }}
-      SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_PASSWD: ${{ secrets.SSH_PASSWD }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+      - name: install sshpass
+        run: sudo apt-get install sshpass -y
       - name: 2C
         run: python -u ./utils/runTest.py -t 2C -r 5 || sh ./utils/upload.sh
   unit-test:
