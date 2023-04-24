@@ -187,7 +187,14 @@ func (rf *Raft) printStatus(prefix string) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	assert(index > rf.logs.lastSnapshotLogIndex, "new snapshot index should be newer")
+	assert(index <= rf.logs.lastLogIndex, "snapshot index out of range")
+
+	rf.logs.Snapshot(index, snapshot)
+	rf.persist()
 }
 
 // example RequestVote RPC arguments structure.
@@ -298,6 +305,14 @@ func (rf *Raft) commit(newCommitIndex int, locked bool) {
 		rf.commitIndex = newCommitIndex
 		rf.persist()
 	}
+}
+
+func (rf *Raft) commitSnapshot(term, lastIncludeIndex int, data []byte) {
+	rf.applier.ApplySnapshot(ApplySnapshotRequest{
+		Term:             term,
+		LastIncludeIndex: lastIncludeIndex,
+		Data:             data,
+	})
 }
 
 type AppendEntriesRequest struct {
@@ -561,6 +576,34 @@ func (rf *Raft) election() {
 			break
 		}
 	}
+}
+
+type InstallSnapshotRequest struct {
+	Term             int
+	LeaderId         int
+	LastIncludeIndex int
+	LastIncludeTerm  int
+	Offset           int
+	data             []byte
+	done             bool
+}
+
+type InstallSnapshotReply struct {
+	Term int
+}
+
+func (rf *Raft) InstallSnapshot(args InstallSnapshotRequest, reply *InstallSnapshotReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.Term = rf.currentTerm
+
+	if args.Term < rf.currentTerm || args.LastIncludeIndex < rf.logs.lastSnapshotLogIndex {
+		return
+	}
+	rf.logs.Snapshot(args.LastIncludeIndex, args.data)
+	rf.commitSnapshot(args.Term, args.LastIncludeIndex, args.data)
+	rf.persist()
 }
 
 func (rf *Raft) transferToLeader() {

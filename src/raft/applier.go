@@ -12,27 +12,35 @@ type ApplyRequest struct {
 	Logs  []Log
 }
 
+type ApplySnapshotRequest struct {
+	Term             int
+	LastIncludeIndex int
+	Data             []byte
+}
+
 type Applier struct {
-	tracer      *logrus.Entry
-	me          int
-	applyCh     chan ApplyMsg
-	nextIndex   int
-	lastApplied int
-	repCh       chan ApplyRequest
-	toApply     []ApplyRequest
-	stopCh      chan struct{}
-	wg          sync.WaitGroup
+	tracer        *logrus.Entry
+	me            int
+	applyCh       chan ApplyMsg
+	nextIndex     int
+	lastApplied   int
+	repCh         chan ApplyRequest
+	snapshotReqCh chan ApplySnapshotRequest
+	toApply       []ApplyRequest
+	stopCh        chan struct{}
+	wg            sync.WaitGroup
 }
 
 func NewApplier(me int, applyCh chan ApplyMsg, tracer *logrus.Entry) *Applier {
 	return &Applier{
-		tracer:      tracer,
-		nextIndex:   0,
-		lastApplied: -1,
-		me:          me,
-		applyCh:     applyCh,
-		stopCh:      make(chan struct{}),
-		repCh:       make(chan ApplyRequest),
+		tracer:        tracer,
+		nextIndex:     0,
+		lastApplied:   -1,
+		me:            me,
+		applyCh:       applyCh,
+		stopCh:        make(chan struct{}),
+		repCh:         make(chan ApplyRequest),
+		snapshotReqCh: make(chan ApplySnapshotRequest),
 	}
 }
 
@@ -63,6 +71,8 @@ func (apl *Applier) Daemon() {
 					return apl.toApply[i].Start < apl.toApply[j].Start
 				})
 			}
+		case req := <-apl.snapshotReqCh:
+			apl.doApplySnapshot(req)
 		}
 	}
 }
@@ -73,11 +83,53 @@ func (apl *Applier) doApply(req ApplyRequest) {
 	apl.applyReqInCache()
 }
 
+func (apl *Applier) doApplySnapshot(req ApplySnapshotRequest) {
+	apl.tracer.Debugf("apply snapshot req: lastInclude=%d", req.LastIncludeIndex)
+	apl.applyCh <- ApplyMsg{
+		SnapshotValid: true,
+		Snapshot:      req.Data,
+		SnapshotTerm:  req.Term,
+		SnapshotIndex: req.LastIncludeIndex,
+	}
+
+	toRemove := -1
+
+	for i := 0; i < len(apl.toApply); i++ {
+		logReq := apl.toApply[i]
+		start := logReq.Start
+		end := logReq.Start + len(logReq.Logs)
+
+		if start > req.LastIncludeIndex {
+			break
+		}
+		if end > req.LastIncludeIndex {
+			logReq.Start = req.LastIncludeIndex + 1
+			logReq.Logs = logReq.Logs[logReq.Start:]
+			apl.toApply[i] = logReq
+			break
+		}
+		toRemove = i
+	}
+
+	if toRemove >= 0 {
+		apl.toApply = apl.toApply[toRemove+1:]
+	}
+}
+
 func (apl *Applier) Apply(req ApplyRequest) {
 	go func() {
 		select {
 		case <-apl.stopCh:
 		case apl.repCh <- req:
+		}
+	}()
+}
+
+func (apl *Applier) ApplySnapshot(req ApplySnapshotRequest) {
+	go func() {
+		select {
+		case <-apl.stopCh:
+		case apl.snapshotReqCh <- req:
 		}
 	}()
 }

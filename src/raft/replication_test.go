@@ -49,7 +49,7 @@ func TestReplicator_fillAppendEntries_matching(t *testing.T) {
 			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, raft.logs.GetLastLogIndex())
 			defer rep.stop()
 
-			args, hasEntryToAppend := rep.fillAppendEntries()
+			args, hasEntryToAppend := rep.fillRequest()
 
 			rq.True(hasEntryToAppend)
 			rq.Equal(c.start, args.Offset)
@@ -78,7 +78,7 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 			defer rep.stop()
 			rep.status = replicating
 
-			args, hasEntryToAppend := rep.fillAppendEntries()
+			args, hasEntryToAppend := rep.fillRequest()
 
 			rq.Equal(hasEntryToAppend, c.hasEntryToAppend)
 			rq.Equal(c.start, args.Offset)
@@ -295,7 +295,7 @@ func Test_AppendEntries(t *testing.T) {
 	})
 
 	for {
-		args, ok := rep.fillAppendEntries()
+		args, ok := rep.fillRequest()
 		if !ok {
 			break
 		}

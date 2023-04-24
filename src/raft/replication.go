@@ -168,17 +168,17 @@ func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus
 }
 
 // init nextIndex = len(rf.logs) - 1 => try to append the last log
-func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
+func (rep *Replicator) fillRequest() (AppendEntriesRequest, *InstallSnapshotRequest, bool) {
 	rep.raft.mu.Lock()
 	defer rep.raft.mu.Unlock()
 
 	if rep.status == matching {
 		return rep.fillRequestsMatching()
 	}
-	return rep.fillRequestsReplication()
+	return rep.fillRequestsReplicating()
 }
 
-func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
+func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, *InstallSnapshotRequest, bool) {
 	assert(rep.status == matching, "should in matching stage")
 
 	rep.nextIndex = max(rep.nextIndex, 0)
@@ -186,6 +186,14 @@ func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
 
 	if len(ret.Logs) == 0 && ret.Snapshot != nil {
 		// handle snapshot
+		args := InstallSnapshotRequest{
+			Term:             rep.term,
+			LeaderId:         rep.me,
+			LastIncludeIndex: rep.raft.logs.lastLogIndex,
+			LastIncludeTerm:  rep.raft.logs.lastLogIndex, //
+			data:             ret.Snapshot,
+		}
+		return AppendEntriesRequest{}, &args, true
 	}
 
 	args := AppendEntriesRequest{
@@ -195,10 +203,10 @@ func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
 		Offset:       ret.Start,
 		Entries:      ret.Logs,
 	}
-	return args, true
+	return args, nil, true
 }
 
-func (rep *Replicator) fillRequestsReplication() (AppendEntriesRequest, bool) {
+func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *InstallSnapshotRequest, bool) {
 	assert(rep.status == replicating, "should in replicating stage")
 
 	args := AppendEntriesRequest{
@@ -209,7 +217,7 @@ func (rep *Replicator) fillRequestsReplication() (AppendEntriesRequest, bool) {
 
 	if rep.nextIndex > rep.raft.logs.GetLastLogIndex() {
 		args.Offset = rep.nextIndex
-		return args, false // no entry to append
+		return args, nil, false // no entry to append
 	}
 
 	nextIndex := max(rep.nextIndex-1, 0)
@@ -217,12 +225,20 @@ func (rep *Replicator) fillRequestsReplication() (AppendEntriesRequest, bool) {
 
 	if ret.Snapshot != nil {
 		// handle snapshot
+		installSnapshotArgs := InstallSnapshotRequest{
+			Term:             rep.term,
+			LeaderId:         rep.me,
+			LastIncludeIndex: rep.raft.logs.lastLogIndex,
+			LastIncludeTerm:  rep.raft.logs.lastLogIndex, //
+			data:             ret.Snapshot,
+		}
+		return AppendEntriesRequest{}, &installSnapshotArgs, true
 	}
 
 	args.Offset = ret.Start
 	args.Entries = ret.Logs
 
-	return args, true
+	return args, nil, true
 }
 
 func (rep *Replicator) update() {
@@ -237,14 +253,20 @@ func (rep *Replicator) update() {
 
 		// hasEntryToAppend == false means no entry to append
 		// but still need to send a heartbeat message
-		args, hasEntryToAppend := rep.fillAppendEntries()
+		args, installSnapshotArgs, hasEntryToAppend := rep.fillRequest()
 		var (
-			reply AppendEntriesReply
-			ok    = false
+			reply                AppendEntriesReply
+			installSnapshotReply InstallSnapshotReply
+			ok                   = false
 		)
 
 		// try to append logs
 		DoWithTimeout(func() {
+			if installSnapshotArgs != nil {
+				rep.tracer.Debugf("try to install snapshot, last include=%d", installSnapshotArgs.LastIncludeIndex)
+				ok = rep.peer.Call("Raft.InstallSnapshot", *installSnapshotArgs, &installSnapshotReply) // may timeout
+				return
+			}
 			rep.tracer.Debugf("try to append entries, start=%d", args.Offset)
 			ok = rep.peer.Call("Raft.AppendEntries", args, &reply) // may timeout
 		}, rep.raft.config.electionTimeout)
@@ -259,7 +281,7 @@ func (rep *Replicator) update() {
 			return
 		}
 
-		if rep.term < args.Term {
+		if (installSnapshotArgs != nil && rep.term < installSnapshotReply.Term) || rep.term < args.Term {
 			go func() {
 				rep.tracer.Debugf("term behind peer, convert to follower, current term=%d, args term=%d", rep.raft.currentTerm, args.Term)
 				rep.raft.mu.Lock()
@@ -272,7 +294,11 @@ func (rep *Replicator) update() {
 			return
 		}
 
-		rep.handleReply(args, &reply)
+		if installSnapshotArgs != nil {
+			rep.handleInstallSnapshotReply(*installSnapshotArgs, &installSnapshotReply)
+		} else {
+			rep.handleReply(args, &reply)
+		}
 	}
 }
 
@@ -284,6 +310,15 @@ func (rep *Replicator) commit(last int) {
 		index: last,
 	}:
 	}
+}
+
+func (rep *Replicator) handleInstallSnapshotReply(args InstallSnapshotRequest, reply *InstallSnapshotReply) {
+	rep.nextIndex = args.LastIncludeIndex + 1
+
+	if rep.status == matching {
+		rep.status = replicating
+	}
+	rep.commit(args.LastIncludeIndex)
 }
 
 func (rep *Replicator) handleReply(args AppendEntriesRequest, reply *AppendEntriesReply) {
