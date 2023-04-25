@@ -93,6 +93,7 @@ func (apl *Applier) doApplySnapshot(req ApplySnapshotRequest) {
 	}
 
 	toRemove := -1
+	noOpLogsToRemove := 0
 
 	for i := 0; i < len(apl.toApply); i++ {
 		logReq := apl.toApply[i]
@@ -103,17 +104,36 @@ func (apl *Applier) doApplySnapshot(req ApplySnapshotRequest) {
 			break
 		}
 		if end > req.LastIncludeIndex {
+			n := req.LastIncludeIndex + 1 - logReq.Start
+			for i := 0; i < n; i++ {
+				log := logReq.Logs[i]
+				if log.Command == noOpCommand {
+					continue
+				}
+				noOpLogsToRemove++
+			}
+
 			logReq.Start = req.LastIncludeIndex + 1
-			logReq.Logs = logReq.Logs[logReq.Start:]
+			logReq.Logs = logReq.Logs[n:]
 			apl.toApply[i] = logReq
 			break
 		}
 		toRemove = i
+		for _, log := range logReq.Logs {
+			if log.Command == noOpCommand {
+				continue
+			}
+			noOpLogsToRemove++
+		}
 	}
 
 	if toRemove >= 0 {
 		apl.toApply = apl.toApply[toRemove+1:]
+		apl.lastApplied += noOpLogsToRemove
+		apl.nextIndex = req.LastIncludeIndex + 1
 	}
+
+	apl.applyReqInCache()
 }
 
 func (apl *Applier) Apply(req ApplyRequest) {

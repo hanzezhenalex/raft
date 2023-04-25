@@ -25,36 +25,69 @@ func makeRaft(n int) *Raft {
 }
 
 type testCase struct {
-	name string
+	name                      string
+	shouldSendInstallSnapshot bool
 
-	start, length    int // expected
+	// init status for replicator & raft
+	logs             int
+	snapshot         []byte
+	lastIncludeIndex int
+
+	// expected
 	hasEntryToAppend bool
 
-	logs      int
-	nextIndex int
+	// expected, specific for AppendEntries
+	start, length int
+	nextIndex     int
 }
 
 func TestReplicator_fillAppendEntries_matching(t *testing.T) {
 	rq := require.New(t)
 
 	matchingCases := []testCase{
-		{name: "1", start: 0, length: 1, logs: 1},
-		{name: "half of maxLogEntries", start: 0, length: maxLogEntries / 2, logs: maxLogEntries / 2},
-		{name: "twice maxLogEntries", start: maxLogEntries, length: maxLogEntries, logs: maxLogEntries * 2},
+		{name: "1", start: 0, length: 1, logs: 1, hasEntryToAppend: true},
+		{name: "half of maxLogEntries", start: 0, length: maxLogEntries / 2, logs: maxLogEntries / 2, hasEntryToAppend: true},
+		{name: "twice maxLogEntries", start: maxLogEntries, length: maxLogEntries, logs: maxLogEntries * 2, hasEntryToAppend: true},
+		{name: "all in snapshot", logs: 10, lastIncludeIndex: 9, snapshot: []byte("test"), shouldSendInstallSnapshot: true, hasEntryToAppend: true},
+		{
+			name:                      "half in snapshot",
+			logs:                      10,
+			lastIncludeIndex:          5,
+			snapshot:                  []byte("test"),
+			shouldSendInstallSnapshot: false,
+			hasEntryToAppend:          true,
+			start:                     6,
+			length:                    4,
+		},
 	}
 
 	for _, c := range matchingCases {
 		t.Run(c.name, func(t *testing.T) {
 			raft := makeRaft(c.logs)
+			if c.snapshot != nil {
+				raft.logs.Snapshot(c.lastIncludeIndex, c.snapshot)
+			}
 			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, raft.logs.GetLastLogIndex())
 			defer rep.stop()
 
-			args, hasEntryToAppend := rep.fillRequest()
+			args, installSnapshotArgs, hasEntryToAppend := rep.fillRequest()
 
-			rq.True(hasEntryToAppend)
-			rq.Equal(c.start, args.Offset)
-			rq.Equal(c.length, len(args.Entries))
-			rq.Equal(c.start, args.Entries[0].Term)
+			rq.Equal(c.hasEntryToAppend, hasEntryToAppend)
+
+			if c.shouldSendInstallSnapshot {
+				rq.NotNil(installSnapshotArgs)
+				rq.Equal(0, installSnapshotArgs.LeaderId)
+				rq.Equal(c.lastIncludeIndex, installSnapshotArgs.LastIncludeIndex)
+				rq.EqualValues(c.snapshot, installSnapshotArgs.data)
+				// see makeRaft
+				rq.Equal(0, installSnapshotArgs.Term)
+				rq.Equal(c.lastIncludeIndex, installSnapshotArgs.LastIncludeTerm)
+			} else {
+				rq.Nil(installSnapshotArgs)
+				rq.Equal(c.start, args.Offset)
+				rq.Equal(c.length, len(args.Entries))
+				rq.Equal(c.start, args.Entries[0].Term)
+			}
 		})
 	}
 }
@@ -68,6 +101,8 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 		{name: "Offset from 3", start: 3, length: maxLogEntries/2 - 3, logs: maxLogEntries / 2, nextIndex: 4, hasEntryToAppend: true},
 		{name: "more than maxLogEntries", start: 3, length: maxLogEntries, logs: maxLogEntries * 2, nextIndex: 4, hasEntryToAppend: true},
 		{name: "no entry to append", start: 1, length: 0, logs: 1, nextIndex: 1, hasEntryToAppend: false},
+		{name: "all in snapshot", logs: 10, lastIncludeIndex: 9, snapshot: []byte("test"), shouldSendInstallSnapshot: true, hasEntryToAppend: false},
+		{name: "all in snapshot", logs: 10, lastIncludeIndex: 5, snapshot: []byte("test"), shouldSendInstallSnapshot: true, hasEntryToAppend: true},
 	}
 
 	for _, c := range replicatingCases {
@@ -75,16 +110,31 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 			raft := makeRaft(c.logs)
 
 			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, c.nextIndex)
+			if c.snapshot != nil {
+				raft.logs.Snapshot(c.lastIncludeIndex, c.snapshot)
+			}
 			defer rep.stop()
 			rep.status = replicating
 
-			args, hasEntryToAppend := rep.fillRequest()
+			args, installSnapshotArgs, hasEntryToAppend := rep.fillRequest()
 
-			rq.Equal(hasEntryToAppend, c.hasEntryToAppend)
-			rq.Equal(c.start, args.Offset)
-			rq.Equal(c.length, len(args.Entries))
-			if c.length > 0 {
-				rq.Equal(c.start, args.Entries[0].Term)
+			rq.Equal(c.hasEntryToAppend, hasEntryToAppend)
+
+			if c.shouldSendInstallSnapshot {
+				rq.NotNil(installSnapshotArgs)
+				rq.Equal(0, installSnapshotArgs.LeaderId)
+				rq.Equal(c.lastIncludeIndex, installSnapshotArgs.LastIncludeIndex)
+				rq.EqualValues(c.snapshot, installSnapshotArgs.data)
+				// see makeRaft
+				rq.Equal(0, installSnapshotArgs.Term)
+				rq.Equal(c.lastIncludeIndex, installSnapshotArgs.LastIncludeTerm)
+			} else {
+				rq.Nil(installSnapshotArgs)
+				rq.Equal(c.start, args.Offset)
+				rq.Equal(c.length, len(args.Entries))
+				if c.length > 0 {
+					rq.Equal(c.start, args.Entries[0].Term)
+				}
 			}
 		})
 	}
@@ -295,7 +345,7 @@ func Test_AppendEntries(t *testing.T) {
 	})
 
 	for {
-		args, ok := rep.fillRequest()
+		args, _, ok := rep.fillRequest()
 		if !ok {
 			break
 		}

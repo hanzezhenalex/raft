@@ -228,11 +228,11 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 		installSnapshotArgs := InstallSnapshotRequest{
 			Term:             rep.term,
 			LeaderId:         rep.me,
-			LastIncludeIndex: rep.raft.logs.lastLogIndex,
-			LastIncludeTerm:  rep.raft.logs.lastLogIndex, //
+			LastIncludeIndex: rep.raft.logs.lastSnapshotLogIndex,
+			LastIncludeTerm:  rep.raft.logs.lastSnapshotLogTerm, //
 			data:             ret.Snapshot,
 		}
-		return AppendEntriesRequest{}, &installSnapshotArgs, true
+		return AppendEntriesRequest{}, &installSnapshotArgs, len(ret.Logs) != 0
 	}
 
 	args.Offset = ret.Start
@@ -277,7 +277,7 @@ func (rep *Replicator) update() {
 		}
 
 		if !ok { // timeout or network unavailable
-			rep.tracer.Debugf("peer disconnected")
+			rep.tracer.Debugf("peer disconnected, will retry")
 			return
 		}
 

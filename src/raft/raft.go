@@ -298,10 +298,23 @@ func (rf *Raft) commit(newCommitIndex int, locked bool) {
 			newCommitIndex = rf.logs.lastLogIndex
 		}
 		ret := rf.logs.Get(rf.commitIndex+1, newCommitIndex)
-		rf.applier.Apply(ApplyRequest{
-			Start: rf.commitIndex + 1,
-			Logs:  ret.Logs, //[rf.commitIndex+1 : newCommitIndex+1]
-		})
+		lastIncludeTerm := rf.logs.lastSnapshotLogTerm
+		lastIncludeIndex := rf.logs.lastSnapshotLogIndex
+		go func() {
+			if ret.Snapshot != nil {
+				rf.applier.ApplySnapshot(ApplySnapshotRequest{
+					Term:             lastIncludeTerm,
+					LastIncludeIndex: lastIncludeIndex,
+					Data:             ret.Snapshot,
+				})
+			}
+			if len(ret.Logs) > 0 {
+				rf.applier.Apply(ApplyRequest{
+					Start: ret.Start,
+					Logs:  ret.Logs, //[rf.commitIndex+1 : newCommitIndex+1]
+				})
+			}
+		}()
 		rf.commitIndex = newCommitIndex
 		rf.persist()
 	}
@@ -313,6 +326,7 @@ func (rf *Raft) commitSnapshot(term, lastIncludeIndex int, data []byte) {
 		LastIncludeIndex: lastIncludeIndex,
 		Data:             data,
 	})
+	rf.commitIndex = max(lastIncludeIndex, rf.commitIndex)
 }
 
 type AppendEntriesRequest struct {
@@ -601,6 +615,7 @@ func (rf *Raft) InstallSnapshot(args InstallSnapshotRequest, reply *InstallSnaps
 	if args.Term < rf.currentTerm || args.LastIncludeIndex < rf.logs.lastSnapshotLogIndex {
 		return
 	}
+	rf.resetTimer()
 	rf.logs.Snapshot(args.LastIncludeIndex, args.data)
 	rf.commitSnapshot(args.Term, args.LastIncludeIndex, args.data)
 	rf.persist()
