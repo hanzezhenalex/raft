@@ -370,7 +370,7 @@ func TestRaft_AppendEntries_withSnapshot(t *testing.T) {
 	rq := require.New(t)
 	rf1 := makeRaft(4 * maxLogEntries)
 	rf1.Snapshot(maxLogEntries, []byte("test"))
-	ch := make(chan received, 10)
+	ch := make(chan received, 100)
 	rep := NewReplicator(1, 0, nil, rf1, tracer, ch, func() {}, rf1.logs.GetLastLogIndex())
 
 	rf2 := Raft{

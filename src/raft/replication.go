@@ -223,7 +223,7 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 	nextIndex := max(rep.nextIndex-1, 0)
 	ret := rep.raft.logs.RetrieveForward(nextIndex, maxLogEntries)
 
-	if ret.Snapshot != nil {
+	if ret.Snapshot != nil && ret.Start > rep.nextIndex {
 		// handle snapshot
 		installSnapshotArgs := InstallSnapshotRequest{
 			Term:             rep.term,
@@ -235,9 +235,19 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 		return AppendEntriesRequest{}, &installSnapshotArgs, len(ret.Logs) != 0
 	}
 
-	args.Offset = ret.Start
-	args.Entries = ret.Logs
-
+	args.Offset = nextIndex
+	if ret.Start == rep.nextIndex {
+		logs := []Log{
+			{
+				Term: rep.raft.logs.lastSnapshotLogTerm,
+			},
+		}
+		logs = append(logs, ret.Logs...)
+		args.Entries = logs
+	} else {
+		assert(ret.Start == nextIndex, "snapshot case should not be handled here")
+		args.Entries = ret.Logs
+	}
 	return args, nil, true
 }
 

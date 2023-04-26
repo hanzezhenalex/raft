@@ -404,6 +404,14 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 		}
 	}
 
+	if ret.Snapshot != nil && match == -1 {
+		if lastIncludeIndex := _toLogIndex(rf.logs.lastSnapshotLogIndex); lastIncludeIndex >= 0 {
+			if rf.logs.lastSnapshotLogTerm == args.Entries[lastIncludeIndex].Term {
+				match = lastIncludeIndex
+			}
+		}
+	}
+
 	// possibility when match >= 0:
 	// 1) log matches, index = match, append at match+1
 	// 2) snapshot exists, match = last snapshot index, append at match+1

@@ -166,7 +166,7 @@ func (ls *LogService) Trim(end int) *LogService {
 }
 
 func (ls *LogService) Snapshot(index int, term int, snapshot []byte) {
-	if index >= ls.lastSnapshotLogIndex {
+	if index <= ls.lastSnapshotLogIndex {
 		return
 	}
 	ls.lastSnapshotLogIndex = index
@@ -269,12 +269,12 @@ func (s *Store) Trim(end int) {
 }
 
 func (s *Store) BuildSnapshot(index int, snapshot []byte) {
-	logsIndex := s.toLogIndex(index)
+	logsIndex := s._toLogIndex(index)
 	if logsIndex < 0 {
 		// todo log waring
 		return
 	}
-	if logsIndex == len(s.logs)-1 {
+	if logsIndex >= len(s.logs)-1 {
 		s.logs = s.logs[:0]
 	} else {
 		s.logs = s.logs[logsIndex+1:] // todo test
@@ -297,6 +297,10 @@ func (s *Store) toLogIndex(index int) int {
 		panic("out of range")
 	}
 	return index
+}
+
+func (s *Store) _toLogIndex(index int) int {
+	return index - s.lastIndexOfSnapshot - 1
 }
 
 func (s *Store) fromLogIndex(index int) int {
