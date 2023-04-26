@@ -18,7 +18,7 @@ type LogState struct {
 
 type ServiceState struct {
 	LogState
-	LastLog              Log
+	LastLogTerm          int
 	LastLogIndex         int
 	LastSnapshotLogIndex int
 	LastSnapshotLogTerm  int
@@ -49,7 +49,7 @@ type LogService struct {
 	store  LogStore
 	tracer *logrus.Entry
 
-	lastLog              Log
+	lastLogTerm          int
 	lastLogIndex         int
 	lastSnapshotLogIndex int
 	lastSnapshotLogTerm  int
@@ -61,7 +61,7 @@ func NewLogService(raft *Raft, state ServiceState, tracer *logrus.Entry) *LogSer
 		raft:                 raft,
 		store:                NewStore(state.LogState),
 		lastLogIndex:         state.LastLogIndex,
-		lastLog:              state.LastLog,
+		lastLogTerm:          state.LastLogTerm,
 		lastSnapshotLogIndex: state.LastSnapshotLogIndex,
 		lastSnapshotLogTerm:  state.LastSnapshotLogTerm,
 		noOp:                 state.NoOp,
@@ -78,7 +78,7 @@ func (ls *LogService) AddCommand(command interface{}) int {
 		Command: command,
 	}
 	ls.lastLogIndex++
-	ls.lastLog = newLog
+	ls.lastLogTerm = newLog.Term
 	return ls.store.Append(newLog)
 }
 
@@ -91,7 +91,7 @@ func (ls *LogService) AddLogs(logs []Log) {
 			ls.noOp++
 		}
 	}
-	ls.lastLog = logs[len(logs)-1]
+	ls.lastLogTerm = logs[len(logs)-1].Term
 	ls.lastLogIndex += len(logs)
 	ls.store.Append(logs...)
 }
@@ -121,7 +121,7 @@ func (ls *LogService) RetrieveBackward(end int, length int) GetLogsResult {
 func (ls *LogService) GetState() ServiceState {
 	return ServiceState{
 		LogState:            ls.store.GetState(),
-		LastLog:             ls.lastLog,
+		LastLogTerm:         ls.lastLogTerm,
 		LastLogIndex:        ls.lastLogIndex,
 		LastSnapshotLogTerm: ls.lastSnapshotLogTerm,
 		NoOp:                ls.noOp,
@@ -154,9 +154,10 @@ func (ls *LogService) Trim(end int) *LogService {
 		ret := ls.store.Get(end, end)
 		if ret.Snapshot == nil {
 			ls.lastLogIndex = ret.Start
-			ls.lastLog = ret.Logs[0]
+			ls.lastLogTerm = ret.Logs[0].Term
 		} else {
 			ls.lastLogIndex = ls.lastSnapshotLogIndex
+			ls.lastLogTerm = ls.lastSnapshotLogTerm
 		}
 	}
 
@@ -190,15 +191,15 @@ func (ls *LogService) IsPeerLogAhead(args RequestVoteArgs) bool {
 	if ls.lastLogIndex == -1 {
 		return true
 	}
-	return args.LastLogTerm > ls.lastLog.Term ||
-		(args.LastLogTerm == ls.lastLog.Term && args.LastLogIndex >= ls.lastLogIndex)
+	return args.LastLogTerm > ls.lastLogTerm ||
+		(args.LastLogTerm == ls.lastLogTerm && args.LastLogIndex >= ls.lastLogIndex)
 }
 
 func (ls *LogService) GetLastLogTerm() int {
 	if ls.lastLogIndex == -1 {
 		return -1
 	}
-	return ls.lastLog.Term
+	return ls.lastLogTerm
 }
 
 func (ls *LogService) GetLastLogIndex() int {

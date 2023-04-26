@@ -227,6 +227,7 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 		args.Offset = ret.Start
 		args.Entries = ret.Logs
 	} else if ret.Snapshot != nil && ret.Start == nextIndex+1 {
+		// only one log in snapshot
 		logs := []Log{
 			{
 				Term: rep.raft.logs.lastSnapshotLogTerm,
@@ -235,7 +236,7 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 		logs = append(logs, ret.Logs...)
 		args.Entries = logs
 	} else {
-		// handle snapshot
+		// more than one log in snapshot
 		installSnapshotArgs := InstallSnapshotRequest{
 			Term:             rep.term,
 			LeaderId:         rep.me,

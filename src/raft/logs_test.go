@@ -293,7 +293,6 @@ func TestLogService_AddCommand(t *testing.T) {
 
 	ls.AddCommand(0)
 	rq.Equal(0, ls.lastLogIndex)
-	rq.Equal(0, ls.lastLog.Command)
 	rq.Equal(0, ls.noOp)
 
 	// test 2: Add noop log
@@ -303,7 +302,6 @@ func TestLogService_AddCommand(t *testing.T) {
 
 	ls.AddCommand(noOpCommand)
 	rq.Equal(1, ls.lastLogIndex)
-	rq.Equal(noOpCommand, ls.lastLog.Command)
 	rq.Equal(1, ls.noOp)
 }
 
@@ -313,13 +311,13 @@ func TestLogService_AddLogs(t *testing.T) {
 	ls := NewEmptyLogService()
 	ls.store = mockStore
 	logs := []Log{
-		{Command: "0"}, {Command: "1"}, {Command: "2"}, {Command: "3"}, {Command: noOpCommand}, {Command: "5"}, {Command: "6"},
+		{Command: "0"}, {Command: "1"}, {Command: "2"}, {Command: "3"}, {Command: noOpCommand}, {Command: "5"}, {Term: 1, Command: "6"},
 	}
 	mockStore.EXPECT().Append(logs).Times(1).Return(0)
 
 	ls.AddLogs(logs)
 	rq.Equal(6, ls.lastLogIndex)
-	rq.Equal("6", ls.lastLog.Command)
+	rq.Equal(1, ls.lastLogTerm)
 	rq.Equal(1, ls.noOp)
 }
 
@@ -361,7 +359,7 @@ func TestLogService_Trim(t *testing.T) {
 	})
 	mockStore.EXPECT().Get(10, 10).Return(GetLogsResult{
 		Start:    10,
-		Logs:     []Log{{Command: 10}},
+		Logs:     []Log{{Term: 1, Command: 10}},
 		Snapshot: nil,
 	})
 	mockStore.EXPECT().Trim(10)
@@ -369,7 +367,7 @@ func TestLogService_Trim(t *testing.T) {
 
 	ls.Trim(10)
 	rq.Equal(10, ls.lastLogIndex)
-	rq.Equal(10, ls.lastLog.Command)
+	rq.Equal(1, ls.lastLogTerm)
 	rq.Equal(0, ls.noOp)
 
 	// test 2: last log in snapshot
@@ -388,9 +386,10 @@ func TestLogService_Trim(t *testing.T) {
 	mockStore.EXPECT().Trim(0)
 	ls.noOp = 1
 	ls.lastSnapshotLogIndex = 0
+	ls.lastSnapshotLogTerm = 1
 
 	ls.Trim(0)
 	rq.Equal(0, ls.lastLogIndex)
-	rq.Equal("snapshot log", ls.lastLog.Command)
+	rq.Equal(1, ls.lastLogTerm)
 	rq.Equal(1, ls.noOp)
 }
