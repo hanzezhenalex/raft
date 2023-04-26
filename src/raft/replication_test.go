@@ -65,7 +65,7 @@ func TestReplicator_fillAppendEntries_matching(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			raft := makeRaft(c.logs)
 			if c.snapshot != nil {
-				raft.logs.Snapshot(c.lastIncludeIndex, c.snapshot)
+				raft.logs.Snapshot(c.lastIncludeIndex, c.lastIncludeIndex, c.snapshot)
 			}
 			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, raft.logs.GetLastLogIndex())
 			defer rep.stop()
@@ -111,7 +111,7 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 
 			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, c.nextIndex)
 			if c.snapshot != nil {
-				raft.logs.Snapshot(c.lastIncludeIndex, c.snapshot)
+				raft.logs.Snapshot(c.lastIncludeIndex, c.lastIncludeIndex, c.snapshot)
 			}
 			defer rep.stop()
 			rep.status = replicating
@@ -324,7 +324,7 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 	}
 }
 
-func Test_AppendEntries(t *testing.T) {
+func TestRaft_AppendEntries(t *testing.T) {
 	rq := require.New(t)
 	rf1 := makeRaft(4 * maxLogEntries)
 	ch := make(chan received, 10)
@@ -353,6 +353,56 @@ func Test_AppendEntries(t *testing.T) {
 
 		rf2.tryAppendEntries(args, &reply)
 		rep.handleReply(args, &reply)
+	}
+
+	rq.True(reflect.DeepEqual(rf1.logs.lastLogIndex, rf2.logs.lastLogIndex))
+
+	// check commit
+	for r := range ch {
+		if r.index == 4*maxLogEntries-1 {
+			return
+		}
+	}
+	close(ch)
+}
+
+func TestRaft_AppendEntries_withSnapshot(t *testing.T) {
+	rq := require.New(t)
+	rf1 := makeRaft(4 * maxLogEntries)
+	rf1.Snapshot(maxLogEntries, []byte("test"))
+	ch := make(chan received, 10)
+	rep := NewReplicator(1, 0, nil, rf1, tracer, ch, func() {}, rf1.logs.GetLastLogIndex())
+
+	rf2 := Raft{
+		tracer:    tracer,
+		persister: MakePersister(),
+		applier:   NewApplier(1, nil, nil),
+	}
+	rf2.logs = NewLogService(&rf2, DefaultServiceState(), tracer)
+	rf2.logs.AddLogs([]Log{
+		{Term: 3, Command: "3"},
+		{Term: 4, Command: "4"},
+		{Term: 5, Command: "5"},
+		{Term: 6, Command: "6"},
+		{Term: 7, Command: "7"},
+	})
+
+	for {
+		args, installSnapshotArgs, ok := rep.fillRequest()
+		if !ok {
+			break
+		}
+
+		if installSnapshotArgs == nil {
+			var reply AppendEntriesReply
+			rf2.tryAppendEntries(args, &reply)
+			rep.handleReply(args, &reply)
+		} else {
+			var reply InstallSnapshotReply
+			rf2.logs.Snapshot(installSnapshotArgs.LastIncludeIndex, installSnapshotArgs.LastIncludeTerm, installSnapshotArgs.data)
+			reply.Term = rf2.currentTerm
+			rep.handleInstallSnapshotReply(*installSnapshotArgs, &reply)
+		}
 	}
 
 	rq.True(reflect.DeepEqual(rf1.logs.lastLogIndex, rf2.logs.lastLogIndex))

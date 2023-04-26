@@ -193,7 +193,9 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	assert(index > rf.logs.lastSnapshotLogIndex, "new snapshot index should be newer")
 	assert(index <= rf.logs.lastLogIndex, "snapshot index out of range")
 
-	rf.logs.Snapshot(index, snapshot)
+	ret := rf.logs.Get(index, index)
+
+	rf.logs.Snapshot(index, ret.Logs[0].Term, snapshot)
 	rf.persist()
 }
 
@@ -616,7 +618,7 @@ func (rf *Raft) InstallSnapshot(args InstallSnapshotRequest, reply *InstallSnaps
 		return
 	}
 	rf.resetTimer()
-	rf.logs.Snapshot(args.LastIncludeIndex, args.data)
+	rf.logs.Snapshot(args.LastIncludeIndex, args.LastIncludeTerm, args.data)
 	rf.commitSnapshot(args.Term, args.LastIncludeIndex, args.data)
 	rf.persist()
 }

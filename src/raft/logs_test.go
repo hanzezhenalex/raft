@@ -387,7 +387,6 @@ func TestLogService_Trim(t *testing.T) {
 	})
 	mockStore.EXPECT().Trim(0)
 	ls.noOp = 1
-	ls.lastSnapshotLog.Command = "snapshot log"
 	ls.lastSnapshotLogIndex = 0
 
 	ls.Trim(0)
