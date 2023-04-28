@@ -191,7 +191,7 @@ func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, *InstallSna
 			LeaderId:         rep.me,
 			LastIncludeIndex: rep.raft.logs.lastSnapshotLogIndex,
 			LastIncludeTerm:  rep.raft.logs.lastSnapshotLogTerm, //
-			data:             ret.Snapshot,
+			Data:             ret.Snapshot,
 		}
 		return AppendEntriesRequest{}, &args, true
 	}
@@ -242,7 +242,7 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 			LeaderId:         rep.me,
 			LastIncludeIndex: rep.raft.logs.lastSnapshotLogIndex,
 			LastIncludeTerm:  rep.raft.logs.lastSnapshotLogTerm, //
-			data:             ret.Snapshot,
+			Data:             ret.Snapshot,
 		}
 		return AppendEntriesRequest{}, &installSnapshotArgs, len(ret.Logs) != 0
 	}

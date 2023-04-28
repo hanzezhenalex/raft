@@ -405,7 +405,8 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	}
 
 	if ret.Snapshot != nil && match == -1 {
-		if lastIncludeIndex := _toLogIndex(rf.logs.lastSnapshotLogIndex); lastIncludeIndex >= 0 {
+		lastIncludeIndex := _toLogIndex(rf.logs.lastSnapshotLogIndex)
+		if lastIncludeIndex >= 0 && lastIncludeIndex < len(args.Entries) {
 			if rf.logs.lastSnapshotLogTerm == args.Entries[lastIncludeIndex].Term {
 				match = lastIncludeIndex
 			}
@@ -415,7 +416,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	// possibility when match >= 0:
 	// 1) log matches, index = match, append at match+1
 	// 2) snapshot exists, match = last snapshot index, append at match+1
-	if match >= 0 || args.Offset == 0 {
+	if match >= 0 || (args.Offset == 0 && ret.Snapshot != nil) {
 		rf.tracer.Debugf("log matched, index=%d", match)
 		reply.Success = true
 		offset := match + 1
@@ -608,8 +609,8 @@ type InstallSnapshotRequest struct {
 	LastIncludeIndex int
 	LastIncludeTerm  int
 	Offset           int
-	data             []byte
-	done             bool
+	Data             []byte
+	Done             bool
 }
 
 type InstallSnapshotReply struct {
@@ -626,8 +627,8 @@ func (rf *Raft) InstallSnapshot(args InstallSnapshotRequest, reply *InstallSnaps
 		return
 	}
 	rf.resetTimer()
-	rf.logs.Snapshot(args.LastIncludeIndex, args.LastIncludeTerm, args.data)
-	rf.commitSnapshot(args.Term, args.LastIncludeIndex, args.data)
+	rf.logs.Snapshot(args.LastIncludeIndex, args.LastIncludeTerm, args.Data)
+	rf.commitSnapshot(args.Term, args.LastIncludeIndex, args.Data)
 	rf.persist()
 }
 

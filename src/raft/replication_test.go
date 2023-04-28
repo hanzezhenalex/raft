@@ -78,7 +78,7 @@ func TestReplicator_fillAppendEntries_matching(t *testing.T) {
 				rq.NotNil(installSnapshotArgs)
 				rq.Equal(0, installSnapshotArgs.LeaderId)
 				rq.Equal(c.lastIncludeIndex, installSnapshotArgs.LastIncludeIndex)
-				rq.EqualValues(c.snapshot, installSnapshotArgs.data)
+				rq.EqualValues(c.snapshot, installSnapshotArgs.Data)
 				// see makeRaft
 				rq.Equal(0, installSnapshotArgs.Term)
 				rq.Equal(c.lastIncludeIndex, installSnapshotArgs.LastIncludeTerm)
@@ -124,7 +124,7 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 				rq.NotNil(installSnapshotArgs)
 				rq.Equal(0, installSnapshotArgs.LeaderId)
 				rq.Equal(c.lastIncludeIndex, installSnapshotArgs.LastIncludeIndex)
-				rq.EqualValues(c.snapshot, installSnapshotArgs.data)
+				rq.EqualValues(c.snapshot, installSnapshotArgs.Data)
 				// see makeRaft
 				rq.Equal(0, installSnapshotArgs.Term)
 				rq.Equal(c.lastIncludeIndex, installSnapshotArgs.LastIncludeTerm)
@@ -399,7 +399,7 @@ func TestRaft_AppendEntries_withSnapshot(t *testing.T) {
 			rep.handleReply(args, &reply)
 		} else {
 			var reply InstallSnapshotReply
-			rf2.logs.Snapshot(installSnapshotArgs.LastIncludeIndex, installSnapshotArgs.LastIncludeTerm, installSnapshotArgs.data)
+			rf2.logs.Snapshot(installSnapshotArgs.LastIncludeIndex, installSnapshotArgs.LastIncludeTerm, installSnapshotArgs.Data)
 			reply.Term = rf2.currentTerm
 			rep.handleInstallSnapshotReply(*installSnapshotArgs, &reply)
 		}
