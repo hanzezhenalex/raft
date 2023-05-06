@@ -1,0 +1,23 @@
+{
+  "name": "socks-v5",
+  "version": "1.0.0",
+  "description": "a proxy for socks-v5, contains both client and server",
+  "main": "./dist/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "cd src && tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanzezhenalex/socks-v5.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hanzezhenalex/socks-v5/issues"
+  },
+  "homepage": "https://github.com/hanzezhenalex/socks-v5#readme",
+  "devDependencies": {
+    "@types/node": "^18.16.3"
+  }
+}
