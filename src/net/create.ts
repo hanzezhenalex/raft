@@ -1,37 +1,37 @@
 import net from "net";
 
-export var CreateConnection = async (
+export var createConnection = async (
   port: number,
   host?: string
 ): Promise<net.Socket> => {
-  var __sock = net.createConnection(port, host);
+  var conn = net.createConnection(port, host);
   return new Promise((resolve, reject) => {
-    __sock.once("connect", () => {
-      resolve(__sock);
-      __sock.removeAllListeners("error");
+    conn.once("connect", () => {
+      resolve(conn);
+      conn.removeAllListeners("error");
     });
-    __sock.once("error", (err) => {
+    conn.once("error", (err) => {
       reject(err);
-      __sock.removeAllListeners("connect");
+      conn.removeAllListeners("connect");
     });
   });
 };
 
-export var CreateServer = async (
+export var createServer = async (
   port: number,
   host: string,
   options?: net.ServerOpts
 ): Promise<net.Server> => {
-  var __srv = net.createServer(options);
-  __srv.listen(port, host);
+  var srv = net.createServer(options);
+  srv.listen(port, host);
   return new Promise((resolve, reject) => {
-    __srv.once("listening", () => {
-      resolve(__srv);
-      __srv.removeAllListeners("error");
+    srv.once("listening", () => {
+      resolve(srv);
+      srv.removeAllListeners("error");
     });
-    __srv.once("error", (err) => {
+    srv.once("error", (err) => {
       reject(err);
-      __srv.removeAllListeners("connect");
+      srv.removeAllListeners("connect");
     });
   });
 };

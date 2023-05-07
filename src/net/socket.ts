@@ -15,46 +15,46 @@ interface SocketEvent {
 }
 
 export class SocketPromise {
-  __sock: Socket;
-  private __waiting_read_events: SocketEvent[] = [];
-  private __read_buffer: Buffer | undefined;
+  _sock: Socket;
+  private waitingReadEvents: SocketEvent[] = [];
+  private readBuffer: Buffer | undefined;
 
-  private __has_error: boolean = false;
-  private __has_closed: boolean = false;
-  private __has_end: boolean = false;
+  private _hasError: boolean = false;
+  private _hasClosed: boolean = false;
+  private _hasEnd: boolean = false;
 
   constructor(socket: Socket) {
-    this.__sock = socket
-      .on("data", this.__onData)
+    this._sock = socket
+      .on("data", this.onData)
       // Emitted when an error occurs. The 'close' event will be called directly following this event.
-      .on("error", this.__onError)
+      .on("error", this.onError)
       // Emitted when the other end of the socket signals the end of transmission, thus ending the readable side of the socket.
-      .on("end", this.__onEnd);
+      .on("end", this.onEnd);
   }
 
   stopWatchEvents = () => {
-    this.__sock
-      .removeListener("data", this.__onData)
-      .removeListener("error", this.__onError)
-      .removeListener("end", this.__onEnd);
+    this._sock
+      .removeListener("data", this.onData)
+      .removeListener("error", this.onError)
+      .removeListener("end", this.onEnd);
   };
 
-  read = (n?: number): Promise<Buffer> => {
-    if (this.__has_error || this.__has_end) {
+   read(n?: number): Promise<Buffer> {
+    if (this._hasError || this._hasEnd) {
       return Promise.reject(SOCKET_ERRORS.ERROR_SEND_ON_CLOSED_SOCKET);
     }
 
-    if (this.__read_buffer && this.__waiting_read_events.length === 0) {
-      if (n && this.__read_buffer.length >= n) {
-        return Promise.resolve(this.__getN(n));
+    if (this.readBuffer && this.waitingReadEvents.length === 0) {
+      if (n && this.readBuffer.length >= n) {
+        return Promise.resolve(this.getN(n));
       }
       if (!n) {
-        return Promise.resolve(this.__getN(this.__read_buffer.length));
+        return Promise.resolve(this.getN(this.readBuffer.length));
       }
     }
 
     var emitter = new EventEmitter();
-    this.__waiting_read_events.push({ n: n ? n : -1, emitter: emitter });
+    this.waitingReadEvents.push({ n: n ? n : -1, emitter: emitter });
 
     return new Promise((resolve, reject) => {
       emitter.on(socketReadEvent, (response) => resolve(response));
@@ -62,13 +62,13 @@ export class SocketPromise {
     });
   };
 
-  write = (buffer: Uint8Array | string): Promise<void> => {
-    if (this.__has_closed || this.__has_error) {
+  write(buffer: Uint8Array | string): Promise<void>  {
+    if (this._hasClosed || this._hasError) {
       return Promise.reject(SOCKET_ERRORS.ERROR_WRITE_ON_CLOSED_SOCKET);
     }
 
     var emitter = new EventEmitter();
-    this.__sock.write(buffer, (err) => emitter.emit(socketErrorEvent, err));
+    this._sock.write(buffer, (err) => emitter.emit(socketErrorEvent, err));
 
     return new Promise((resolve, reject) => {
       emitter.on(socketErrorEvent, (err) => {
@@ -78,53 +78,53 @@ export class SocketPromise {
   };
 
   close = () => {
-    this.__sock.writable ? this.__sock.end() : null;
-    this.__has_closed = true;
+    this._sock.writable ? this._sock.end() : null;
+    this._hasClosed = true;
   };
 
-  private __onData = (buffer: Buffer) => {
-    this.__read_buffer = this.__read_buffer
-      ? Buffer.concat([this.__read_buffer, buffer])
+  private onData = (buffer: Buffer) => {
+    this.readBuffer = this.readBuffer
+      ? Buffer.concat([this.readBuffer, buffer])
       : buffer;
 
     while (
-      this.__waiting_read_events.length > 0 &&
-      this.__waiting_read_events[0].n <= this.__read_buffer.length
+      this.waitingReadEvents.length > 0 &&
+      this.waitingReadEvents[0].n <= this.readBuffer.length
     ) {
-      var ev = this.__waiting_read_events[0];
-      this.__waiting_read_events = this.__waiting_read_events.slice(1);
+      var ev = this.waitingReadEvents[0];
+      this.waitingReadEvents = this.waitingReadEvents.slice(1);
 
       var response =
         ev.n === -1
-          ? this.__getN(this.__read_buffer.length)
-          : this.__getN(ev.n);
+          ? this.getN(this.readBuffer.length)
+          : this.getN(ev.n);
       ev.emitter.emit(socketReadEvent, response);
     }
   };
 
-  private __onError = (err: Error) => {
-    this.__waiting_read_events.map((__waitingReadEvent) => {
+  private onError = (err: Error) => {
+    this.waitingReadEvents.map((__waitingReadEvent) => {
       __waitingReadEvent.emitter?.emit(socketErrorEvent, err);
     });
-    this.__waiting_read_events = [];
-    this.__has_error = true;
+    this.waitingReadEvents = [];
+    this._hasError = true;
   };
 
-  private __onEnd = () => (this.__has_end = true);
+  private onEnd = () => (this._hasEnd = true);
 
-  private __getN = (n: number): Buffer => {
-    if (!this.__read_buffer) {
-      throw new Error("__readBuffer should not be undefined");
+  private getN = (n: number): Buffer => {
+    if (!this.readBuffer) {
+      throw new Error("readBuffer should not be undefined");
     }
 
     var response: Buffer;
 
-    if (this.__read_buffer.length === n) {
-      response = this.__read_buffer;
-      this.__read_buffer = undefined;
+    if (this.readBuffer.length === n) {
+      response = this.readBuffer;
+      this.readBuffer = undefined;
     } else {
-      response = this.__read_buffer.subarray(0, n);
-      this.__read_buffer = this.__read_buffer.subarray(n);
+      response = this.readBuffer.subarray(0, n);
+      this.readBuffer = this.readBuffer.subarray(n);
     }
 
     return response;

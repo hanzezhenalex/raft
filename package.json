@@ -19,5 +19,9 @@
   "homepage": "https://github.com/hanzezhenalex/socks-v5#readme",
   "devDependencies": {
     "@types/node": "^18.16.3"
+  },
+  "dependencies": {
+    "commander": "^10.0.1",
+    "log4js": "^6.9.1"
   }
 }
