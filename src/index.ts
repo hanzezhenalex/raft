@@ -19,7 +19,7 @@ clientCommand
     };
     console.log(`client started. cfg=${JSON.stringify(cfg)}`);
     var client = new Client(cfg);
-    await client.Start()
+    await client.start()
   });
 
 program.parse(process.argv);

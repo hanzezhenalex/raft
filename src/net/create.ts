@@ -1,5 +1,9 @@
 import net from "net";
 
+export class ConnCreateError extends Error {
+  constructor(msg: any) { super(msg) }
+}
+
 export var createConnection = async (
   port: number,
   host?: string
@@ -11,7 +15,7 @@ export var createConnection = async (
       conn.removeAllListeners("error");
     });
     conn.once("error", (err) => {
-      reject(err);
+      reject(new ConnCreateError(err));
       conn.removeAllListeners("connect");
     });
   });
@@ -30,7 +34,7 @@ export var createServer = async (
       srv.removeAllListeners("error");
     });
     srv.once("error", (err) => {
-      reject(err);
+      reject(new ConnCreateError(err));
       srv.removeAllListeners("connect");
     });
   });
