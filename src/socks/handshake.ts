@@ -26,6 +26,12 @@ export namespace Errors {
       super(`incorrect version, expect=0x05, actual=${msg}`)
     }
   }
+
+  export class UnsupporttedMethod extends Error {
+    constructor(msg: any) {
+      super(`unsupportted method, actual=${msg}`)
+    }
+  }
 }
 
 export namespace MethodSelection {
@@ -103,20 +109,23 @@ export namespace MethodSelection {
 
 export namespace Addressing {
   export const SUCCEED = 0x00;
+  export const CONNECT = 0x03;
   export const SERVER_INTERNAL_ERROR = new Uint8Array([
     0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   ]);
+  export const SERVER_NOT_AVAIABLE = new Uint8Array()
+  export const METHOD_NOT_SUPPORT = new Uint8Array()
 
-  class Message {
-    private cmd_or_rep: Uint8Array;
-    private atyp: Uint8Array;
+  export class Message {
+    private cmd_or_rep: number;
+    private atyp: number;
     private addrLength: number;
     private dstAddr: Uint8Array;
     private dstPort: Buffer;
 
     constructor(
-      cmd_or_rep: Uint8Array,
-      atyp: Uint8Array,
+      cmd_or_rep: number,
+      atyp: number,
       addrLength: number,
       dstAddr: Uint8Array,
       dstPort: Buffer
@@ -129,12 +138,12 @@ export namespace Addressing {
     }
 
     needDnsLookUp = (): boolean => {
-      return this.atyp[0] === 0x03;
+      return this.atyp === 0x03;
     };
 
     toBuffer = (): Uint8Array => {
       var buffer: Uint8Array;
-      switch (this.atyp[0]) {
+      switch (this.atyp) {
         case 0x01:
           buffer = new Uint8Array(3 + 1 + 4 + 2);
           for (var i = 4, j = 0; j < 4; i++, j++) {
@@ -165,14 +174,14 @@ export namespace Addressing {
           throw new Error("Unknown addr type");
       }
       buffer[0] = SOCKS5_VERSION;
-      buffer[1] = this.cmd_or_rep[0];
+      buffer[1] = this.cmd_or_rep;
       buffer[2] = RSV_BUFFER;
-      buffer[3] = this.atyp[0];
+      buffer[3] = this.atyp;
       return buffer;
     };
 
     getCmdOrRep = (): number => {
-      return this.cmd_or_rep[0];
+      return this.cmd_or_rep;
     };
 
     getTargetPort = (): number => {
@@ -206,7 +215,7 @@ export namespace Addressing {
 
     var dstAddr = await conn.read(addrLength);
     var dstPort = await conn.read(2);
-    return new Message(cmd_or_rep, atyp, addrLength, dstAddr, dstPort);
+    return new Message(cmd_or_rep[0], atyp[0], addrLength, dstAddr, dstPort);
   }
 }
 
