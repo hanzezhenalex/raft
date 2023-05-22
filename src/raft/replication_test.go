@@ -67,7 +67,7 @@ func TestReplicator_fillAppendEntries_matching(t *testing.T) {
 			if c.snapshot != nil {
 				raft.logs.Snapshot(c.lastIncludeIndex, c.lastIncludeIndex, c.snapshot)
 			}
-			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, raft.logs.GetLastLogIndex())
+			rep := NewReplicator(1, 0, nil, raft, tracer, nil, func() {}, raft.logs.GetLastLogIndex())
 			defer rep.stop()
 
 			args, installSnapshotArgs, hasEntryToAppend := rep.fillRequest()
@@ -109,7 +109,7 @@ func TestReplicator_fillAppendEntries_replicating(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			raft := makeRaft(c.logs)
 
-			rep := NewReplicator(1, 0, nil, raft, nil, nil, func() {}, c.nextIndex)
+			rep := NewReplicator(1, 0, nil, raft, tracer, nil, func() {}, c.nextIndex)
 			if c.snapshot != nil {
 				raft.logs.Snapshot(c.lastIncludeIndex, c.lastIncludeIndex, c.snapshot)
 			}
