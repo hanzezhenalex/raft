@@ -156,7 +156,7 @@ func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus
 		i:               i,
 		peer:            peer,
 		raft:            raft,
-		tracer:          tracer,
+		tracer:          tracer.WithField("term", raft.currentTerm),
 		status:          matching,
 		stopped:         make(chan struct{}),
 		reportSendIndex: reportSendIndex,
@@ -210,7 +210,7 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 	assert(rep.status == replicating, "should in replicating stage")
 
 	args := AppendEntriesRequest{
-		Term:         rep.raft.currentTerm,
+		Term:         rep.term,
 		LeaderId:     rep.me,
 		LeaderCommit: rep.raft.commitIndex,
 	}
