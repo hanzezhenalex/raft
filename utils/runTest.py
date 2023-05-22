@@ -117,7 +117,7 @@ logger = Logger()
 
 @logger.runOneTest
 def runTest(testCase: str):
-    command = "go test -run {} -timeout 120s".format(testCase)
+    command = "go test -run {}".format(testCase)
 
     out_temp = tempfile.TemporaryFile(mode='w+')
     fileno = out_temp.fileno()

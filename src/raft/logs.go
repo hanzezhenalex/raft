@@ -135,10 +135,7 @@ func (ls *LogService) Trim(end int) *LogService {
 	// update noOp
 	if end+1 < ls.store.Length() {
 		toRemove := ls.store.Get(end+1, ls.store.Length()-1)
-		if toRemove.Snapshot != nil {
-			// todo log warning
-			panic("should not trim committed logs")
-		}
+		assert(toRemove.Snapshot == nil, "should not trim committed logs")
 		for _, log := range toRemove.Logs {
 			if log.Command == noOpCommand {
 				ls.noOp--
