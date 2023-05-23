@@ -374,6 +374,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 
 func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
 	rf.tracer.Debug("try append entries")
+
 	if len(args.Entries) == 0 {
 		rf.tracer.Debug("receive heartbeat message")
 		reply.Success = true
@@ -382,28 +383,31 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 		return
 	}
 
-	_fromLogIndex := func(i int) int {
+	argsLogIndexToLogServiceIndex := func(i int) int {
 		return args.Offset + i
 	}
-	_toLogIndex := func(i int) int {
+	logServiceIndexToArgsLogIndex := func(i int) int {
 		return i - args.Offset
 	}
 
 	ret := rf.logs.RetrieveForward(args.Offset, len(args.Entries))
 	rf.tracer.Debugf("correspnding logs: %#v", ret)
 
-	RetLogToCorrespondPeerLog := func(i int) int {
+	retLogIndexToArgsLogIndex := func(i int) int {
 		ahead := ret.Start - args.Offset
 		return ahead + i
+	}
+	retLogIndexToLogServiceIndex := func(i int) int {
+		return ret.Start + i
 	}
 
 	match := len(ret.Logs) - 1 // the first index of log that match
 
 	if len(ret.Logs) > 0 {
 		// try to march log from end
-		for ; match >= _toLogIndex(ret.Start); match-- {
+		for ; match >= 0; match-- {
 			myLog := ret.Logs[match]
-			leaderLog := args.Entries[RetLogToCorrespondPeerLog(match)]
+			leaderLog := args.Entries[retLogIndexToArgsLogIndex(match)]
 			if myLog.Term == leaderLog.Term {
 				break
 			}
@@ -411,27 +415,38 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	}
 
 	if ret.Snapshot != nil && match == -1 {
-		lastIncludeIndex := _toLogIndex(rf.logs.lastSnapshotLogIndex)
-		if lastIncludeIndex >= 0 && lastIncludeIndex < len(args.Entries) {
-			if rf.logs.lastSnapshotLogTerm == args.Entries[lastIncludeIndex].Term {
-				match = lastIncludeIndex
-			}
+		lastIncludeIndex := logServiceIndexToArgsLogIndex(rf.logs.lastSnapshotLogIndex)
+		if rf.logs.lastSnapshotLogTerm == args.Entries[lastIncludeIndex].Term {
+			match = lastIncludeIndex
 		}
 	}
 
 	// possibility when match >= 0:
 	// 1) log matches, index = match, append at match+1
 	// 2) snapshot exists, match = last snapshot index, append at match+1
-	if match >= 0 || (args.Offset == 0 && ret.Snapshot == nil) {
-		rf.tracer.Debugf("log matched, index=%d", match)
-		reply.Success = true
-		offset := match + 1
-		if offset < len(args.Entries) { // in case args.Entries is empty
-			rf.logs.Trim(_fromLogIndex(match)).AddLogs(args.Entries[offset:])
+	if match >= 0 {
+		rf.tracer.Debugf("log matched, index=%d", retLogIndexToLogServiceIndex(match))
+
+		offset := retLogIndexToArgsLogIndex(match) + 1
+		if offset < len(args.Entries) { // in case args.Entries are empty
+			rf.logs.Trim(retLogIndexToLogServiceIndex(match)).AddLogs(args.Entries[offset:])
 			rf.persist()
 		}
-		reply.Next = _fromLogIndex(len(args.Entries))
-		rf.commit(min(args.LeaderCommit, _fromLogIndex(len(args.Entries)-1)), true)
+
+		reply.Success = true
+		reply.Next = argsLogIndexToLogServiceIndex(len(args.Entries))
+
+		rf.commit(min(args.LeaderCommit, argsLogIndexToLogServiceIndex(len(args.Entries)-1)), true)
+	} else if args.Offset == 0 && ret.Snapshot == nil {
+		rf.tracer.Debugf("no log matched, still append, args offset=0")
+
+		rf.logs.Trim(-1).AddLogs(args.Entries)
+		rf.persist()
+
+		reply.Success = true
+		reply.Next = len(args.Entries)
+
+		rf.commit(min(args.LeaderCommit, len(args.Entries)-1), true)
 	} else {
 		// no log matched, no snapshot
 		reply.Next = max(args.Offset-1, 0)
@@ -692,7 +707,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-	// Offset ticker goroutine to Offset elections
+	// start ticker goroutine to Offset elections
 	go rf.ticker()
 	go rf.applier.Daemon()
 	return rf

@@ -129,9 +129,19 @@ func (ls *LogService) GetState() ServiceState {
 }
 
 func (ls *LogService) Trim(end int) *LogService {
+	if end < 0 {
+		ls.lastLogIndex = -1
+		ls.lastLogTerm = -1
+
+		assert(ls.lastSnapshotLogIndex <= 0, "should not trim committed logs, index=%d", ls.lastSnapshotLogIndex)
+		ls.store.Trim(-1)
+		return ls
+	}
+
 	if end > ls.store.Length() {
 		panic("out of range")
 	}
+
 	// update noOp
 	if end+1 < ls.store.Length() {
 		toRemove := ls.store.Get(end+1, ls.store.Length()-1)
@@ -144,18 +154,13 @@ func (ls *LogService) Trim(end int) *LogService {
 	}
 
 	// update lastLog
-	if end < 0 {
-		ls.lastLogIndex = -1
-		assert(ls.lastSnapshotLogIndex <= end, "should not trim committed logs, index=%d", ls.lastSnapshotLogIndex)
+	ret := ls.store.Get(end, end)
+	if ret.Snapshot == nil {
+		ls.lastLogIndex = ret.Start
+		ls.lastLogTerm = ret.Logs[0].Term
 	} else {
-		ret := ls.store.Get(end, end)
-		if ret.Snapshot == nil {
-			ls.lastLogIndex = ret.Start
-			ls.lastLogTerm = ret.Logs[0].Term
-		} else {
-			ls.lastLogIndex = ls.lastSnapshotLogIndex
-			ls.lastLogTerm = ls.lastSnapshotLogTerm
-		}
+		ls.lastLogIndex = ls.lastSnapshotLogIndex
+		ls.lastLogTerm = ls.lastSnapshotLogTerm
 	}
 
 	// do trim
@@ -253,7 +258,7 @@ func (s *Store) Get(left, right int) GetLogsResult {
 	left, right = s.toLogIndex(left), s.toLogIndex(right)
 	if left < 0 {
 		left = 0
-		ret.Start = -1
+		ret.Start = s.lastIndexOfSnapshot
 		ret.Snapshot = s.snapshot
 	}
 	if right >= 0 {

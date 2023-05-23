@@ -51,5 +51,7 @@ jobs:
       run: cd ./src/raft && go test -run LogService
     - name: logStore
       run: cd ./src/raft && go test -run Store
+    - name: replication
+      run: cd ./src/raft && go test -run AppendEntries
 
     

@@ -181,6 +181,9 @@ func TestReplicator_handleReply_matching(t *testing.T) {
 
 type tryAppendEntriesTestCases struct {
 	logs             int
+	snapshot         []byte
+	lastIncludeIndex int
+
 	name             string
 	args             AppendEntriesRequest
 	expectedReply    AppendEntriesReply
@@ -314,6 +317,129 @@ func TestRaft_tryAppendEntries(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			raft := makeRaft(c.logs)
+
+			var reply AppendEntriesReply
+			raft.tryAppendEntries(c.args, &reply)
+
+			rq.Equal(c.expectedReply, reply)
+			rq.Equal(c.expectedRaftLogs, raft.logs.GetLastLogIndex()+1)
+		})
+	}
+}
+
+func TestRaft_tryAppendEntries_snapshot(t *testing.T) {
+	rq := require.New(t)
+
+	cases := []tryAppendEntriesTestCases{
+		{
+			name:             "last entry in snapshot",
+			logs:             1,
+			lastIncludeIndex: 1,
+			snapshot:         []byte("test"),
+			args: AppendEntriesRequest{
+				Offset: 1,
+				Entries: []Log{
+					{
+						Term:    1,
+						Command: "1",
+					},
+				}},
+			expectedReply: AppendEntriesReply{
+				Success: true,
+				Next:    2,
+			},
+			expectedRaftLogs: 2,
+		},
+		{
+			name:             "append",
+			logs:             1,
+			lastIncludeIndex: 1,
+			snapshot:         []byte("test"),
+			args: AppendEntriesRequest{
+				Offset: 1,
+				Entries: []Log{
+					{
+						Term:    1,
+						Command: "1",
+					},
+					{
+						Term:    2,
+						Command: "2",
+					},
+					{
+						Term:    2,
+						Command: "3",
+					},
+				}},
+			expectedReply: AppendEntriesReply{
+				Success: true,
+				Next:    4,
+			},
+			expectedRaftLogs: 4,
+		},
+		{
+			name:             "cut old, append new",
+			logs:             3,
+			lastIncludeIndex: 1,
+			snapshot:         []byte("test"),
+			args: AppendEntriesRequest{
+				Offset: 1,
+				Entries: []Log{
+					{
+						Term:    1,
+						Command: "1",
+					},
+					{
+						Term:    2,
+						Command: "2",
+					},
+					{
+						Term:    2,
+						Command: "3",
+					},
+				}},
+			expectedReply: AppendEntriesReply{
+				Success: true,
+				Next:    4,
+			},
+			expectedRaftLogs: 4,
+		},
+		{
+			name:             "match in snapshot",
+			logs:             3,
+			lastIncludeIndex: 1,
+			snapshot:         []byte("test"),
+			args: AppendEntriesRequest{
+				Offset: 1,
+				Entries: []Log{
+					{
+						Term:    1,
+						Command: "1",
+					},
+					{
+						Term:    22,
+						Command: "2",
+					},
+					{
+						Term:    22,
+						Command: "3",
+					},
+				}},
+			expectedReply: AppendEntriesReply{
+				Success: true,
+				Next:    4,
+			},
+			expectedRaftLogs: 4,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			raft := makeRaft(c.logs)
+
+			if c.snapshot != nil {
+				raft.logs.Snapshot(c.lastIncludeIndex, c.lastIncludeIndex, c.snapshot)
+			}
 
 			var reply AppendEntriesReply
 			raft.tryAppendEntries(c.args, &reply)
