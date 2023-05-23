@@ -162,7 +162,7 @@ func TestStore_Get(t *testing.T) {
 		t.Run("get one", func(t *testing.T) {
 			t.Run("in snapshot", func(t *testing.T) {
 				ret := s.Get(1, 1)
-				rq.Equal(-1, ret.Start)
+				rq.Equal(2, ret.Start)
 				rq.Equal(0, len(ret.Logs))
 				rq.EqualValues(s.snapshot, ret.Snapshot)
 			})
@@ -179,7 +179,7 @@ func TestStore_Get(t *testing.T) {
 		t.Run("get many", func(t *testing.T) {
 			t.Run("in snapshot", func(t *testing.T) {
 				ret := s.Get(0, 2)
-				rq.Equal(-1, ret.Start)
+				rq.Equal(2, ret.Start)
 				rq.Equal(0, len(ret.Logs))
 				rq.EqualValues(s.snapshot, ret.Snapshot)
 			})
