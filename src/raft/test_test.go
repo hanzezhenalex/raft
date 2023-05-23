@@ -9,6 +9,7 @@ package raft
 //
 
 import (
+	"os"
 	"testing"
 )
 import "fmt"
@@ -1312,22 +1313,22 @@ func TestSnapshotInit2D(t *testing.T) {
 	cfg.end()
 }
 
-//func TestMain(m *testing.M) {
-//	ch := make(chan int, 1)
-//
-//	go func() {
-//		ch <- m.Run()
-//	}()
-//
-//	time.AfterFunc(2*time.Minute, func() {
-//		ch <- 2
-//	})
-//
-//	code := <-ch
-//
-//	if code > 0 {
-//		fmt.Print(logBuffer.String())
-//	}
-//
-//	os.Exit(code)
-//}
+func TestMain(m *testing.M) {
+	ch := make(chan int, 1)
+
+	go func() {
+		ch <- m.Run()
+	}()
+
+	time.AfterFunc(2*time.Minute, func() {
+		ch <- 2
+	})
+
+	code := <-ch
+
+	if code > 0 {
+		fmt.Print(logBuffer.String())
+	}
+
+	os.Exit(code)
+}

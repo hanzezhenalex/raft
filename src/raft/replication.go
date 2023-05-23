@@ -156,7 +156,7 @@ func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus
 		i:               i,
 		peer:            peer,
 		raft:            raft,
-		tracer:          tracer.WithField("term", raft.currentTerm),
+		tracer:          tracer.WithField("rep-term", raft.currentTerm),
 		status:          matching,
 		stopped:         make(chan struct{}),
 		reportSendIndex: reportSendIndex,
@@ -235,6 +235,7 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 		}
 		logs = append(logs, ret.Logs...)
 		args.Entries = logs
+		args.Offset = rep.raft.logs.lastSnapshotLogIndex
 	} else {
 		// more than one log in snapshot
 		installSnapshotArgs := InstallSnapshotRequest{
@@ -321,6 +322,7 @@ func (rep *Replicator) commit(last int) {
 }
 
 func (rep *Replicator) handleInstallSnapshotReply(args InstallSnapshotRequest, reply *InstallSnapshotReply) {
+	rep.tracer.Debugf("got InstallSnapshot reply reply=%#v", reply)
 	rep.nextIndex = args.LastIncludeIndex + 1
 
 	if rep.status == matching {

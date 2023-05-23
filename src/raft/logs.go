@@ -169,6 +169,10 @@ func (ls *LogService) Snapshot(index int, term int, snapshot []byte) {
 	}
 	ls.lastSnapshotLogIndex = index
 	ls.lastSnapshotLogTerm = term
+	if index > ls.lastLogIndex {
+		ls.lastLogIndex = index
+		ls.lastSnapshotLogTerm = term
+	}
 	ls.store.BuildSnapshot(index, snapshot)
 }
 

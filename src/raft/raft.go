@@ -176,8 +176,8 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 func (rf *Raft) printStatus(prefix string) {
-	status := fmt.Sprintf("term=%d, last log=%d, dcommitIndex=%d, lastApplied=%d, leader=%t",
-		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.applier.lastApplied, rf.isLeader)
+	status := fmt.Sprintf("term=%d, last log=%d, dcommitIndex=%d, lastApplied=%d, leader=%t, snapshot=%d",
+		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.applier.lastApplied, rf.isLeader, rf.logs.lastSnapshotLogIndex)
 	rf.tracer.Debugf("[%s]raft status: %s", prefix, status)
 }
 
@@ -187,6 +187,8 @@ func (rf *Raft) printStatus(prefix string) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
+	rf.tracer.Debugf("install snapshot, index=%d", index)
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -347,7 +349,8 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
-	rf.tracer.Debugf("receive AppendEntries from %d, offset=%d, logs=%#v", args.LeaderId, args.Offset, args.Entries)
+	rf.tracer.Debugf("receive AppendEntries from %d, offset=%d, logs=%#v, term=%d",
+		args.LeaderId, args.Offset, args.Entries, args.Term)
 
 	rf.mu.Lock()
 	defer func() {
@@ -357,7 +360,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	}()
 
 	if args.Term < rf.currentTerm {
-		rf.tracer.Debugf("AppendEntry rejected")
+		rf.tracer.Debugf("AppendEntry rejected, argsTerm=%d, currentTerm=%d", args.Term, rf.currentTerm)
 		reply.Next = args.Offset + len(args.Entries) - 1
 		return
 	}
@@ -370,7 +373,9 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 }
 
 func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
+	rf.tracer.Debug("try append entries")
 	if len(args.Entries) == 0 {
+		rf.tracer.Debug("receive heartbeat message")
 		reply.Success = true
 		reply.Next = args.Offset
 		rf.commit(args.LeaderCommit, true)
@@ -385,6 +390,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	}
 
 	ret := rf.logs.RetrieveForward(args.Offset, len(args.Entries))
+	rf.tracer.Debugf("correspnding logs: %#v", ret)
 
 	RetLogToCorrespondPeerLog := func(i int) int {
 		ahead := ret.Start - args.Offset
@@ -416,7 +422,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	// possibility when match >= 0:
 	// 1) log matches, index = match, append at match+1
 	// 2) snapshot exists, match = last snapshot index, append at match+1
-	if match >= 0 || (args.Offset == 0 && ret.Snapshot != nil) {
+	if match >= 0 || (args.Offset == 0 && ret.Snapshot == nil) {
 		rf.tracer.Debugf("log matched, index=%d", match)
 		reply.Success = true
 		offset := match + 1
@@ -485,7 +491,7 @@ func (rf *Raft) killed() bool {
 func (rf *Raft) ticker() {
 	timer := time.NewTimer(rf.config.electionTimeout)
 
-	rf.tracer.Debugf("raft Offset with election timeout = %s", rf.config.electionTimeout.String())
+	rf.tracer.Debugf("raft start with election timeout = %s", rf.config.electionTimeout.String())
 
 	for rf.killed() == false {
 		// Your code here (2A)
@@ -508,7 +514,7 @@ func (rf *Raft) handleTimeout() {
 	if rf.isLeader {
 		rf.tracer.Debug("leader ignore the heartbeat, will be done by replicator")
 	} else {
-		rf.tracer.Debug("timeout, Offset election")
+		rf.tracer.Debug("timeout, start election")
 		go rf.election()
 	}
 }
