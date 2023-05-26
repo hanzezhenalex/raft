@@ -160,7 +160,7 @@ class FixedRoundRunner:
                     self.totalFailure += 1
                     if failures >= MAX_FAILURE_TIME_SINGLE:
                         print("abort, failues greater than MAX_FAILURE_TIME_SINGLE, {}".format(t))
-                        continue
+                        break
 
 
 

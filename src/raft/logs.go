@@ -22,7 +22,7 @@ type ServiceState struct {
 	LastLogIndex             int
 	LastSnapshotLogIndex     int
 	LastSnapshotLogTerm      int
-	lastSnapshotNoOpCommands int
+	LastSnapshotNoOpCommands int
 	NoOp                     int
 }
 
@@ -33,7 +33,7 @@ func DefaultServiceState() ServiceState {
 		},
 		LastSnapshotLogIndex:     -1,
 		LastLogIndex:             -1,
-		lastSnapshotNoOpCommands: 0,
+		LastSnapshotNoOpCommands: 0,
 	}
 }
 
@@ -67,7 +67,7 @@ func NewLogService(raft *Raft, state ServiceState, tracer *logrus.Entry) *LogSer
 		lastLogTerm:              state.LastLogTerm,
 		lastSnapshotLogIndex:     state.LastSnapshotLogIndex,
 		lastSnapshotLogTerm:      state.LastSnapshotLogTerm,
-		lastSnapshotNoOpCommands: state.lastSnapshotNoOpCommands,
+		lastSnapshotNoOpCommands: state.LastSnapshotNoOpCommands,
 		noOp:                     state.NoOp,
 		tracer:                   tracer,
 	}
@@ -124,11 +124,12 @@ func (ls *LogService) RetrieveBackward(end int, length int) GetLogsResult {
 
 func (ls *LogService) GetState() ServiceState {
 	return ServiceState{
-		LogState:            ls.store.GetState(),
-		LastLogTerm:         ls.lastLogTerm,
-		LastLogIndex:        ls.lastLogIndex,
-		LastSnapshotLogTerm: ls.lastSnapshotLogTerm,
-		NoOp:                ls.noOp,
+		LogState:                 ls.store.GetState(),
+		LastLogTerm:              ls.lastLogTerm,
+		LastLogIndex:             ls.lastLogIndex,
+		LastSnapshotLogTerm:      ls.lastSnapshotLogTerm,
+		LastSnapshotNoOpCommands: ls.lastSnapshotNoOpCommands,
+		NoOp:                     ls.noOp,
 	}
 }
 
