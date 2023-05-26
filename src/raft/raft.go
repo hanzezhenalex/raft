@@ -156,16 +156,21 @@ func (rf *Raft) readPersist(data []byte) {
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 
-	d.Decode(&rf.currentTerm)
-	d.Decode(&rf.voteFor)
-	d.Decode(&rf.commitIndex)
-	d.Decode(&state)
+	_ = d.Decode(&rf.currentTerm)
+	_ = d.Decode(&rf.voteFor)
+	_ = d.Decode(&rf.commitIndex)
+	_ = d.Decode(&state)
 
 	rf.logs = NewLogService(rf, state, rf.tracer.WithField("role", "log service"))
 	if rf.commitIndex >= 0 {
 		ret := rf.logs.Get(0, rf.commitIndex)
 		if ret.Snapshot != nil {
-			// handle snapshot
+			rf.applier.ApplySnapshot(ApplySnapshotRequest{
+				Term:             rf.logs.lastLogTerm,
+				LastIncludeIndex: rf.logs.lastSnapshotLogIndex,
+				LastIncludeNoops: rf.logs.lastSnapshotNoOpCommands,
+				Data:             ret.Snapshot,
+			})
 		}
 		rf.applier.Apply(ApplyRequest{
 			Start: ret.Start,
