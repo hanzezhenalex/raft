@@ -393,3 +393,77 @@ func TestLogService_Trim(t *testing.T) {
 	rq.Equal(1, ls.lastLogTerm)
 	rq.Equal(1, ls.noOp)
 }
+
+func TestLogService_Snapshot(t *testing.T) {
+	rq := require.New(t)
+
+	t.Run("build snapshot in logs", func(t *testing.T) {
+		mockStore := NewMockLogStore(gomock.NewController(t))
+		mockStore.EXPECT().Get(0, 1).Return(GetLogsResult{
+			Start: 0,
+			Logs: []Log{
+				{Command: 0}, {Command: noOpCommand},
+			},
+		})
+		mockStore.EXPECT().BuildSnapshot(gomock.Any(), gomock.Any()).Times(1)
+
+		ls := NewEmptyLogService()
+		ls.store = mockStore
+		ls.lastSnapshotNoOpCommands = 0
+		ls.lastSnapshotLogTerm = -1
+		ls.lastSnapshotLogIndex = -1
+		ls.lastLogTerm = 3
+		ls.lastLogIndex = 3
+
+		ls.Snapshot(1, 2, []byte("test"))
+
+		rq.Equal(1, ls.lastSnapshotNoOpCommands)
+		rq.Equal(2, ls.lastSnapshotLogTerm)
+		rq.Equal(1, ls.lastSnapshotLogIndex)
+	})
+
+	t.Run("build snapshot in logs, with snapshot", func(t *testing.T) {
+		mockStore := NewMockLogStore(gomock.NewController(t))
+		mockStore.EXPECT().Get(0, 2).Return(GetLogsResult{
+			Start: 2,
+			Logs: []Log{
+				{Command: noOpCommand},
+			},
+			Snapshot: []byte("test"),
+		})
+		mockStore.EXPECT().BuildSnapshot(gomock.Any(), gomock.Any()).Times(1)
+
+		ls := NewEmptyLogService()
+		ls.store = mockStore
+		ls.lastSnapshotNoOpCommands = 1
+		ls.lastSnapshotLogTerm = 1
+		ls.lastSnapshotLogIndex = 1
+		ls.lastLogTerm = 3
+		ls.lastLogIndex = 3
+
+		ls.Snapshot(2, 2, []byte("test"))
+
+		rq.Equal(2, ls.lastSnapshotNoOpCommands)
+		rq.Equal(2, ls.lastSnapshotLogTerm)
+		rq.Equal(2, ls.lastSnapshotLogIndex)
+	})
+
+	t.Run("build snapshot outside logs", func(t *testing.T) {
+		mockStore := NewMockLogStore(gomock.NewController(t))
+		mockStore.EXPECT().BuildSnapshot(gomock.Any(), gomock.Any()).Times(1)
+
+		ls := NewEmptyLogService()
+		ls.store = mockStore
+		ls.lastSnapshotNoOpCommands = 0
+		ls.lastSnapshotLogTerm = -1
+		ls.lastSnapshotLogIndex = -1
+		ls.lastLogTerm = 3
+		ls.lastLogIndex = 3
+
+		ls.Snapshot(4, 2, []byte("test"))
+
+		rq.Equal(0, ls.lastSnapshotNoOpCommands)
+		rq.Equal(2, ls.lastSnapshotLogTerm)
+		rq.Equal(4, ls.lastSnapshotLogIndex)
+	})
+}

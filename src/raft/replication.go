@@ -187,11 +187,12 @@ func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, *InstallSna
 	if len(ret.Logs) == 0 && ret.Snapshot != nil {
 		// handle snapshot
 		args := InstallSnapshotRequest{
-			Term:             rep.term,
-			LeaderId:         rep.me,
-			LastIncludeIndex: rep.raft.logs.lastSnapshotLogIndex,
-			LastIncludeTerm:  rep.raft.logs.lastSnapshotLogTerm, //
-			Data:             ret.Snapshot,
+			Term:              rep.term,
+			LeaderId:          rep.me,
+			LastIncludeIndex:  rep.raft.logs.lastSnapshotLogIndex,
+			LastIncludeTerm:   rep.raft.logs.lastSnapshotLogTerm, //
+			LastSnapshotNoOps: rep.raft.logs.lastSnapshotNoOpCommands,
+			Data:              ret.Snapshot,
 		}
 		return AppendEntriesRequest{}, &args, true
 	}
@@ -239,11 +240,12 @@ func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *Install
 	} else {
 		// more than one log in snapshot
 		installSnapshotArgs := InstallSnapshotRequest{
-			Term:             rep.term,
-			LeaderId:         rep.me,
-			LastIncludeIndex: rep.raft.logs.lastSnapshotLogIndex,
-			LastIncludeTerm:  rep.raft.logs.lastSnapshotLogTerm, //
-			Data:             ret.Snapshot,
+			Term:              rep.term,
+			LeaderId:          rep.me,
+			LastIncludeIndex:  rep.raft.logs.lastSnapshotLogIndex,
+			LastIncludeTerm:   rep.raft.logs.lastSnapshotLogTerm, //
+			LastSnapshotNoOps: rep.raft.logs.lastSnapshotNoOpCommands,
+			Data:              ret.Snapshot,
 		}
 		return AppendEntriesRequest{}, &installSnapshotArgs, len(ret.Logs) != 0
 	}

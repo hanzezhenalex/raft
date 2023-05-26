@@ -297,10 +297,11 @@ func (rf *Raft) commit(newCommitIndex int, locked bool) {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 	}
+	// new logs may not be replicated
+	if newCommitIndex > rf.logs.lastLogIndex {
+		newCommitIndex = rf.logs.lastLogIndex
+	}
 	if rf.commitIndex < newCommitIndex {
-		if newCommitIndex > rf.logs.lastLogIndex {
-			newCommitIndex = rf.logs.lastLogIndex
-		}
 		ret := rf.logs.Get(rf.commitIndex+1, newCommitIndex)
 		lastIncludeTerm := rf.logs.lastSnapshotLogTerm
 		lastIncludeIndex := rf.logs.lastSnapshotLogIndex
@@ -324,11 +325,12 @@ func (rf *Raft) commit(newCommitIndex int, locked bool) {
 	}
 }
 
-func (rf *Raft) commitSnapshot(term, lastIncludeIndex int, data []byte) {
+func (rf *Raft) commitSnapshot(term, lastIncludeIndex int, data []byte, noop int) {
 	rf.applier.ApplySnapshot(ApplySnapshotRequest{
 		Term:             term,
 		LastIncludeIndex: lastIncludeIndex,
 		Data:             data,
+		LastIncludeNoops: noop,
 	})
 	rf.commitIndex = max(lastIncludeIndex, rf.commitIndex)
 }
@@ -625,13 +627,14 @@ func (rf *Raft) election() {
 }
 
 type InstallSnapshotRequest struct {
-	Term             int
-	LeaderId         int
-	LastIncludeIndex int
-	LastIncludeTerm  int
-	Offset           int
-	Data             []byte
-	Done             bool
+	Term              int
+	LeaderId          int
+	LastIncludeIndex  int
+	LastIncludeTerm   int
+	LastSnapshotNoOps int
+	Offset            int
+	Data              []byte
+	Done              bool
 }
 
 type InstallSnapshotReply struct {
@@ -648,8 +651,11 @@ func (rf *Raft) InstallSnapshot(args InstallSnapshotRequest, reply *InstallSnaps
 		return
 	}
 	rf.resetTimer()
+
 	rf.logs.Snapshot(args.LastIncludeIndex, args.LastIncludeTerm, args.Data)
-	rf.commitSnapshot(args.Term, args.LastIncludeIndex, args.Data)
+	rf.logs.SetSnapshotNoop(args.LastSnapshotNoOps)
+
+	rf.commitSnapshot(args.Term, args.LastIncludeIndex, args.Data, args.LastSnapshotNoOps)
 	rf.persist()
 }
 

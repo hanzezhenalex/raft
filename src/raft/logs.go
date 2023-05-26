@@ -18,11 +18,12 @@ type LogState struct {
 
 type ServiceState struct {
 	LogState
-	LastLogTerm          int
-	LastLogIndex         int
-	LastSnapshotLogIndex int
-	LastSnapshotLogTerm  int
-	NoOp                 int
+	LastLogTerm              int
+	LastLogIndex             int
+	LastSnapshotLogIndex     int
+	LastSnapshotLogTerm      int
+	lastSnapshotNoOpCommands int
+	NoOp                     int
 }
 
 func DefaultServiceState() ServiceState {
@@ -30,8 +31,9 @@ func DefaultServiceState() ServiceState {
 		LogState: LogState{
 			LastIndexOfSnapshot: -1,
 		},
-		LastSnapshotLogIndex: -1,
-		LastLogIndex:         -1,
+		LastSnapshotLogIndex:     -1,
+		LastLogIndex:             -1,
+		lastSnapshotNoOpCommands: 0,
 	}
 }
 
@@ -49,23 +51,25 @@ type LogService struct {
 	store  LogStore
 	tracer *logrus.Entry
 
-	lastLogTerm          int
-	lastLogIndex         int
-	lastSnapshotLogIndex int
-	lastSnapshotLogTerm  int
-	noOp                 int
+	lastLogTerm              int
+	lastLogIndex             int
+	lastSnapshotLogIndex     int
+	lastSnapshotLogTerm      int
+	lastSnapshotNoOpCommands int // number of no-op commands contains in snapshot
+	noOp                     int
 }
 
 func NewLogService(raft *Raft, state ServiceState, tracer *logrus.Entry) *LogService {
 	return &LogService{
-		raft:                 raft,
-		store:                NewStore(state.LogState),
-		lastLogIndex:         state.LastLogIndex,
-		lastLogTerm:          state.LastLogTerm,
-		lastSnapshotLogIndex: state.LastSnapshotLogIndex,
-		lastSnapshotLogTerm:  state.LastSnapshotLogTerm,
-		noOp:                 state.NoOp,
-		tracer:               tracer,
+		raft:                     raft,
+		store:                    NewStore(state.LogState),
+		lastLogIndex:             state.LastLogIndex,
+		lastLogTerm:              state.LastLogTerm,
+		lastSnapshotLogIndex:     state.LastSnapshotLogIndex,
+		lastSnapshotLogTerm:      state.LastSnapshotLogTerm,
+		lastSnapshotNoOpCommands: state.lastSnapshotNoOpCommands,
+		noOp:                     state.NoOp,
+		tracer:                   tracer,
 	}
 }
 
@@ -176,9 +180,22 @@ func (ls *LogService) Snapshot(index int, term int, snapshot []byte) {
 	ls.lastSnapshotLogTerm = term
 	if index > ls.lastLogIndex {
 		ls.lastLogIndex = index
-		ls.lastSnapshotLogTerm = term
+		ls.lastLogTerm = term
+	} else {
+		noOpCnt := 0
+		logs := ls.store.Get(0, index)
+		for _, log := range logs.Logs {
+			if log.Command == noOpCommand {
+				noOpCnt++
+			}
+		}
+		ls.lastSnapshotNoOpCommands += noOpCnt
 	}
 	ls.store.BuildSnapshot(index, snapshot)
+}
+
+func (ls *LogService) SetSnapshotNoop(n int) {
+	ls.lastSnapshotNoOpCommands = n
 }
 
 func (ls *LogService) FromNoOpIndex(index int) int {
