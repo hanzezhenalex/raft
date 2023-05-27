@@ -96,14 +96,13 @@ func (apl *Applier) doApply(req ApplyRequest) {
 
 func (apl *Applier) doApplySnapshot(req ApplySnapshotRequest) {
 	apl.tracer.Debugf("apply snapshot req: lastInclude=%d", req.LastIncludeIndex)
+
 	apl.applyCh <- ApplyMsg{
 		SnapshotValid: true,
 		Snapshot:      req.Data,
 		SnapshotTerm:  req.Term,
-		SnapshotIndex: req.LastIncludeIndex,
+		SnapshotIndex: req.LastIncludeIndex - req.LastIncludeNoops,
 	}
-	apl.lastApplied = req.LastIncludeIndex - req.LastIncludeNoops
-	apl.nextIndex = req.LastIncludeIndex + 1
 
 	toRemove := -1
 	for i := 0; i < len(apl.toApply); i++ {
@@ -123,6 +122,11 @@ func (apl *Applier) doApplySnapshot(req ApplySnapshotRequest) {
 
 	if toRemove >= 0 {
 		apl.toApply = apl.toApply[toRemove+1:]
+	}
+
+	if req.LastIncludeIndex >= apl.nextIndex {
+		apl.lastApplied = req.LastIncludeIndex - req.LastIncludeNoops
+		apl.nextIndex = req.LastIncludeIndex + 1
 	}
 
 	apl.applyReqInCache()

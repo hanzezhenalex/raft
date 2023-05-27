@@ -71,12 +71,13 @@ func TestApplier_ApplySnapshot(t *testing.T) {
 		snapshot, ok := <-applyCh
 		rq.Equal(true, ok)
 		rq.Equal(true, snapshot.SnapshotValid)
-		rq.Equal(4, snapshot.SnapshotIndex)
+		rq.Equal(2, snapshot.SnapshotIndex)
 
 		for i := 5; i < 7; i++ {
 			msg, ok := <-applyCh
 			rq.Equal(true, ok)
 			rq.Equal(i, msg.Command)
+			rq.Equal(i-2, msg.CommandIndex)
 		}
 	}()
 

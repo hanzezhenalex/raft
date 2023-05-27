@@ -192,8 +192,8 @@ func (rf *Raft) printStatus(prefix string) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-	noopIndex := rf.logs.ToNoOpIndex(index)
-	rf.tracer.Debugf("install snapshot, index=%d, noop index=%d", index, noopIndex)
+	noopIndex := rf.logs.FromNoOpIndex(index)
+	rf.tracer.Debugf("install snapshot, noop index=%d, index=%d", index, noopIndex)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
