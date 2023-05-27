@@ -170,6 +170,7 @@ func (apl *Applier) handleApplyReq(req ApplyRequest) {
 func (apl *Applier) applyReqInCache() {
 	cleaned := -1
 	for i, req := range apl.toApply {
+		req = apl.adjustReq(req)
 		if req.Start == apl.nextIndex {
 			apl.handleApplyReq(req)
 			cleaned = i
