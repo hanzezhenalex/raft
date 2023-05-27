@@ -121,10 +121,10 @@ func (rf *Raft) persist() {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 
-	e.Encode(rf.currentTerm) // assume no error
-	e.Encode(rf.voteFor)
-	e.Encode(rf.commitIndex)
-	e.Encode(rf.logs.GetState())
+	_ = e.Encode(rf.currentTerm) // assume no error
+	_ = e.Encode(rf.voteFor)
+	_ = e.Encode(rf.commitIndex)
+	_ = e.Encode(rf.logs.GetState())
 
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
@@ -192,17 +192,18 @@ func (rf *Raft) printStatus(prefix string) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-	rf.tracer.Debugf("install snapshot, index=%d", index)
+	noopIndex := rf.logs.ToNoOpIndex(index)
+	rf.tracer.Debugf("install snapshot, index=%d, noop index=%d", index, noopIndex)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	assert(index > rf.logs.lastSnapshotLogIndex, "new snapshot index should be newer")
-	assert(index <= rf.logs.lastLogIndex, "snapshot index out of range")
+	assert(noopIndex >= rf.logs.lastSnapshotLogIndex, "new snapshot index should be newer")
+	assert(noopIndex <= rf.logs.lastLogIndex, "snapshot index out of range")
 
-	ret := rf.logs.Get(index, index)
+	ret := rf.logs.Get(noopIndex, noopIndex)
 
-	rf.logs.Snapshot(index, ret.Logs[0].Term, snapshot)
+	rf.logs.Snapshot(noopIndex, ret.Logs[0].Term, snapshot)
 	rf.persist()
 }
 
@@ -686,7 +687,7 @@ func (rf *Raft) stopLeader() {
 	}
 }
 
-// the service or tester wants to create a Raft server. the ports
+// Make create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays
 // have the same order. persister is a place for this server to

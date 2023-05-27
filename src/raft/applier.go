@@ -151,7 +151,8 @@ func (apl *Applier) handleApplyReq(req ApplyRequest) {
 		apl.nextIndex++
 		if log.Command != noOpCommand {
 			apl.lastApplied++
-			apl.tracer.Debugf("apply message: index=%d, command=%#v", apl.lastApplied, log.Command)
+			apl.tracer.Debugf("apply message: index=%d, lastApplied=%d, command=%#v",
+				apl.nextIndex, apl.lastApplied, log.Command)
 			apl.applyCh <- ApplyMsg{
 				CommandValid: true,
 				CommandIndex: apl.lastApplied,

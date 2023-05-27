@@ -22,7 +22,7 @@ class RoleLogEntry:
 
     def gen(self, max_id: int):
         tdClass = 'td-id'
-        if self.log.startswith(" apply message"):
+        if self.log.startswith(" apply message") or self.log.startswith(" apply snapshot req"):
             tdClass = 'td-commit'
 
         body = ""
