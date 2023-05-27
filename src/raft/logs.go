@@ -197,6 +197,7 @@ func (ls *LogService) Snapshot(index int, term int, snapshot []byte) {
 
 func (ls *LogService) SetSnapshotNoop(n int) {
 	ls.lastSnapshotNoOpCommands = n
+	ls.noOp = ls.lastSnapshotNoOpCommands
 }
 
 func (ls *LogService) FromNoOpIndex(index int) int {
