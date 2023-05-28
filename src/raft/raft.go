@@ -121,10 +121,10 @@ func (rf *Raft) persist() {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 
-	e.Encode(rf.currentTerm) // assume no error
-	e.Encode(rf.voteFor)
-	e.Encode(rf.commitIndex)
-	e.Encode(rf.logs.GetState())
+	_ = e.Encode(rf.currentTerm) // assume no error
+	_ = e.Encode(rf.voteFor)
+	_ = e.Encode(rf.commitIndex)
+	_ = e.Encode(rf.logs.GetState())
 
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
@@ -156,16 +156,21 @@ func (rf *Raft) readPersist(data []byte) {
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 
-	d.Decode(&rf.currentTerm)
-	d.Decode(&rf.voteFor)
-	d.Decode(&rf.commitIndex)
-	d.Decode(&state)
+	_ = d.Decode(&rf.currentTerm)
+	_ = d.Decode(&rf.voteFor)
+	_ = d.Decode(&rf.commitIndex)
+	_ = d.Decode(&state)
 
 	rf.logs = NewLogService(rf, state, rf.tracer.WithField("role", "log service"))
 	if rf.commitIndex >= 0 {
 		ret := rf.logs.Get(0, rf.commitIndex)
 		if ret.Snapshot != nil {
-			// handle snapshot
+			rf.applier.ApplySnapshot(ApplySnapshotRequest{
+				Term:             rf.logs.lastLogTerm,
+				LastIncludeIndex: rf.logs.lastSnapshotLogIndex,
+				LastIncludeNoops: rf.logs.lastSnapshotNoOpCommands,
+				Data:             ret.Snapshot,
+			})
 		}
 		rf.applier.Apply(ApplyRequest{
 			Start: ret.Start,
@@ -176,8 +181,8 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 func (rf *Raft) printStatus(prefix string) {
-	status := fmt.Sprintf("term=%d, last log=%d, dcommitIndex=%d, lastApplied=%d, leader=%t",
-		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.applier.lastApplied, rf.isLeader)
+	status := fmt.Sprintf("term=%d, last log=%d, dcommitIndex=%d, lastApplied=%d, leader=%t, snapshot=%d, nextIndex=%d",
+		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.applier.lastApplied, rf.isLeader, rf.logs.lastSnapshotLogIndex, rf.applier.nextIndex)
 	rf.tracer.Debugf("[%s]raft status: %s", prefix, status)
 }
 
@@ -187,7 +192,19 @@ func (rf *Raft) printStatus(prefix string) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
+	noopIndex := rf.logs.FromNoOpIndex(index)
+	rf.tracer.Debugf("install snapshot, noop index=%d, index=%d", index, noopIndex)
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	assert(noopIndex >= rf.logs.lastSnapshotLogIndex, "new snapshot index should be newer")
+	assert(noopIndex <= rf.logs.lastLogIndex, "snapshot index out of range")
+
+	ret := rf.logs.Get(noopIndex, noopIndex)
+
+	rf.logs.Snapshot(noopIndex, ret.Logs[0].Term, snapshot)
+	rf.persist()
 }
 
 // example RequestVote RPC arguments structure.
@@ -286,18 +303,42 @@ func (rf *Raft) commit(newCommitIndex int, locked bool) {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 	}
+	// new logs may not be replicated
+	if newCommitIndex > rf.logs.lastLogIndex {
+		newCommitIndex = rf.logs.lastLogIndex
+	}
 	if rf.commitIndex < newCommitIndex {
-		if newCommitIndex > rf.logs.lastLogIndex {
-			newCommitIndex = rf.logs.lastLogIndex
-		}
 		ret := rf.logs.Get(rf.commitIndex+1, newCommitIndex)
-		rf.applier.Apply(ApplyRequest{
-			Start: rf.commitIndex + 1,
-			Logs:  ret.Logs, //[rf.commitIndex+1 : newCommitIndex+1]
-		})
+		lastIncludeTerm := rf.logs.lastSnapshotLogTerm
+		lastIncludeIndex := rf.logs.lastSnapshotLogIndex
+		go func() {
+			if ret.Snapshot != nil {
+				rf.applier.ApplySnapshot(ApplySnapshotRequest{
+					Term:             lastIncludeTerm,
+					LastIncludeIndex: lastIncludeIndex,
+					Data:             ret.Snapshot,
+				})
+			}
+			if len(ret.Logs) > 0 {
+				rf.applier.Apply(ApplyRequest{
+					Start: ret.Start,
+					Logs:  ret.Logs, //[rf.commitIndex+1 : newCommitIndex+1]
+				})
+			}
+		}()
 		rf.commitIndex = newCommitIndex
 		rf.persist()
 	}
+}
+
+func (rf *Raft) commitSnapshot(term, lastIncludeIndex int, data []byte, noop int) {
+	rf.applier.ApplySnapshot(ApplySnapshotRequest{
+		Term:             term,
+		LastIncludeIndex: lastIncludeIndex,
+		Data:             data,
+		LastIncludeNoops: noop,
+	})
+	rf.commitIndex = max(lastIncludeIndex, rf.commitIndex)
 }
 
 type AppendEntriesRequest struct {
@@ -316,7 +357,8 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
-	rf.tracer.Debugf("receive AppendEntries from %d, offset=%d, logs=%#v", args.LeaderId, args.Offset, args.Entries)
+	rf.tracer.Debugf("receive AppendEntries from %d, offset=%d, logs=%#v, term=%d",
+		args.LeaderId, args.Offset, args.Entries, args.Term)
 
 	rf.mu.Lock()
 	defer func() {
@@ -326,7 +368,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 	}()
 
 	if args.Term < rf.currentTerm {
-		rf.tracer.Debugf("AppendEntry rejected")
+		rf.tracer.Debugf("AppendEntry rejected, argsTerm=%d, currentTerm=%d", args.Term, rf.currentTerm)
 		reply.Next = args.Offset + len(args.Entries) - 1
 		return
 	}
@@ -339,53 +381,81 @@ func (rf *Raft) AppendEntries(args AppendEntriesRequest, reply *AppendEntriesRep
 }
 
 func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntriesReply) {
+	rf.tracer.Debug("try append entries")
+
 	if len(args.Entries) == 0 {
+		rf.tracer.Debug("receive heartbeat message")
 		reply.Success = true
 		reply.Next = args.Offset
 		rf.commit(args.LeaderCommit, true)
 		return
 	}
 
-	_fromLogIndex := func(i int) int {
+	argsLogIndexToLogServiceIndex := func(i int) int {
 		return args.Offset + i
 	}
-	_toLogIndex := func(i int) int {
+	logServiceIndexToArgsLogIndex := func(i int) int {
 		return i - args.Offset
 	}
 
 	ret := rf.logs.RetrieveForward(args.Offset, len(args.Entries))
+	rf.tracer.Debugf("correspnding logs: %#v", ret)
 
-	RetLogToCorrespondPeerLog := func(i int) int {
+	retLogIndexToArgsLogIndex := func(i int) int {
 		ahead := ret.Start - args.Offset
 		return ahead + i
+	}
+	retLogIndexToLogServiceIndex := func(i int) int {
+		return ret.Start + i
 	}
 
 	match := len(ret.Logs) - 1 // the first index of log that match
 
 	if len(ret.Logs) > 0 {
 		// try to march log from end
-		for ; match >= _toLogIndex(ret.Start); match-- {
+		for ; match >= 0; match-- {
 			myLog := ret.Logs[match]
-			leaderLog := args.Entries[RetLogToCorrespondPeerLog(match)]
+			leaderLog := args.Entries[retLogIndexToArgsLogIndex(match)]
 			if myLog.Term == leaderLog.Term {
+				match = retLogIndexToLogServiceIndex(match)
 				break
 			}
+		}
+	}
+
+	if ret.Snapshot != nil && match == -1 {
+		lastIncludeIndex := logServiceIndexToArgsLogIndex(rf.logs.lastSnapshotLogIndex)
+		if rf.logs.lastSnapshotLogTerm == args.Entries[lastIncludeIndex].Term {
+			match = argsLogIndexToLogServiceIndex(lastIncludeIndex)
 		}
 	}
 
 	// possibility when match >= 0:
 	// 1) log matches, index = match, append at match+1
 	// 2) snapshot exists, match = last snapshot index, append at match+1
-	if match >= 0 || args.Offset == 0 {
+	if match >= 0 {
 		rf.tracer.Debugf("log matched, index=%d", match)
-		reply.Success = true
-		offset := match + 1
-		if offset < len(args.Entries) { // in case args.Entries is empty
-			rf.logs.Trim(_fromLogIndex(match)).AddLogs(args.Entries[offset:])
+
+		offset := logServiceIndexToArgsLogIndex(match) + 1
+		if offset < len(args.Entries) { // in case args.Entries are empty
+			rf.logs.Trim(match).AddLogs(args.Entries[offset:])
 			rf.persist()
 		}
-		reply.Next = _fromLogIndex(len(args.Entries))
-		rf.commit(min(args.LeaderCommit, _fromLogIndex(len(args.Entries)-1)), true)
+
+		reply.Success = true
+		reply.Next = argsLogIndexToLogServiceIndex(len(args.Entries))
+
+		rf.commit(min(args.LeaderCommit, argsLogIndexToLogServiceIndex(len(args.Entries)-1)), true)
+	} else if args.Offset == 0 && ret.Snapshot == nil {
+		rf.tracer.Debugf("no log matched, still append, args offset=0")
+
+		rf.logs.Trim(-1).AddLogs(args.Entries)
+		rf.persist()
+
+		reply.Success = true
+		reply.Next = len(args.Entries)
+
+		rf.commit(min(args.LeaderCommit, len(args.Entries)-1), true)
 	} else {
 		// no log matched, no snapshot
 		reply.Next = max(args.Offset-1, 0)
@@ -445,7 +515,7 @@ func (rf *Raft) killed() bool {
 func (rf *Raft) ticker() {
 	timer := time.NewTimer(rf.config.electionTimeout)
 
-	rf.tracer.Debugf("raft Offset with election timeout = %s", rf.config.electionTimeout.String())
+	rf.tracer.Debugf("raft start with election timeout = %s", rf.config.electionTimeout.String())
 
 	for rf.killed() == false {
 		// Your code here (2A)
@@ -468,7 +538,7 @@ func (rf *Raft) handleTimeout() {
 	if rf.isLeader {
 		rf.tracer.Debug("leader ignore the heartbeat, will be done by replicator")
 	} else {
-		rf.tracer.Debug("timeout, Offset election")
+		rf.tracer.Debug("timeout, start election")
 		go rf.election()
 	}
 }
@@ -563,6 +633,42 @@ func (rf *Raft) election() {
 	}
 }
 
+type InstallSnapshotRequest struct {
+	Term              int
+	LeaderId          int
+	LastIncludeIndex  int
+	LastIncludeTerm   int
+	LastSnapshotNoOps int
+	Offset            int
+	Data              []byte
+	Done              bool
+}
+
+type InstallSnapshotReply struct {
+	Term int
+}
+
+func (rf *Raft) InstallSnapshot(args InstallSnapshotRequest, reply *InstallSnapshotReply) {
+	rf.tracer.Debugf("req install snapshot, LastIncludeIndex=%d, LastSnapshotNoOps=%d",
+		args.LastIncludeIndex, args.LastSnapshotNoOps)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.Term = rf.currentTerm
+
+	if args.Term < rf.currentTerm || args.LastIncludeIndex < rf.logs.lastSnapshotLogIndex {
+		return
+	}
+	rf.resetTimer()
+
+	rf.logs.Snapshot(args.LastIncludeIndex, args.LastIncludeTerm, args.Data)
+	rf.logs.SetSnapshotNoop(args.LastSnapshotNoOps)
+
+	rf.commitSnapshot(args.Term, args.LastIncludeIndex, args.Data, args.LastSnapshotNoOps)
+	rf.persist()
+}
+
 func (rf *Raft) transferToLeader() {
 	subTracer := rf.tracer.WithField("Term", rf.currentTerm)
 	subTracer.Debug("change to leader, start heart beat")
@@ -585,7 +691,7 @@ func (rf *Raft) stopLeader() {
 	}
 }
 
-// the service or tester wants to create a Raft server. the ports
+// Make create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays
 // have the same order. persister is a place for this server to
@@ -617,7 +723,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-	// Offset ticker goroutine to Offset elections
+	// start ticker goroutine to Offset elections
 	go rf.ticker()
 	go rf.applier.Daemon()
 	return rf

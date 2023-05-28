@@ -117,7 +117,7 @@ logger = Logger()
 
 @logger.runOneTest
 def runTest(testCase: str):
-    command = "go test -run {} -timeout 120s".format(testCase)
+    command = "go test -run {}".format(testCase)
 
     out_temp = tempfile.TemporaryFile(mode='w+')
     fileno = out_temp.fileno()
@@ -160,7 +160,7 @@ class FixedRoundRunner:
                     self.totalFailure += 1
                     if failures >= MAX_FAILURE_TIME_SINGLE:
                         print("abort, failues greater than MAX_FAILURE_TIME_SINGLE, {}".format(t))
-                        continue
+                        break
 
 
 

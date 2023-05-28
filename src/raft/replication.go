@@ -156,7 +156,7 @@ func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus
 		i:               i,
 		peer:            peer,
 		raft:            raft,
-		tracer:          tracer,
+		tracer:          tracer.WithField("rep-term", raft.currentTerm),
 		status:          matching,
 		stopped:         make(chan struct{}),
 		reportSendIndex: reportSendIndex,
@@ -168,17 +168,17 @@ func NewReplicator(i, me int, peer *labrpc.ClientEnd, raft *Raft, tracer *logrus
 }
 
 // init nextIndex = len(rf.logs) - 1 => try to append the last log
-func (rep *Replicator) fillAppendEntries() (AppendEntriesRequest, bool) {
+func (rep *Replicator) fillRequest() (AppendEntriesRequest, *InstallSnapshotRequest, bool) {
 	rep.raft.mu.Lock()
 	defer rep.raft.mu.Unlock()
 
 	if rep.status == matching {
 		return rep.fillRequestsMatching()
 	}
-	return rep.fillRequestsReplication()
+	return rep.fillRequestsReplicating()
 }
 
-func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
+func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, *InstallSnapshotRequest, bool) {
 	assert(rep.status == matching, "should in matching stage")
 
 	rep.nextIndex = max(rep.nextIndex, 0)
@@ -186,6 +186,15 @@ func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
 
 	if len(ret.Logs) == 0 && ret.Snapshot != nil {
 		// handle snapshot
+		args := InstallSnapshotRequest{
+			Term:              rep.term,
+			LeaderId:          rep.me,
+			LastIncludeIndex:  rep.raft.logs.lastSnapshotLogIndex,
+			LastIncludeTerm:   rep.raft.logs.lastSnapshotLogTerm, //
+			LastSnapshotNoOps: rep.raft.logs.lastSnapshotNoOpCommands,
+			Data:              ret.Snapshot,
+		}
+		return AppendEntriesRequest{}, &args, true
 	}
 
 	args := AppendEntriesRequest{
@@ -195,34 +204,52 @@ func (rep *Replicator) fillRequestsMatching() (AppendEntriesRequest, bool) {
 		Offset:       ret.Start,
 		Entries:      ret.Logs,
 	}
-	return args, true
+	return args, nil, true
 }
 
-func (rep *Replicator) fillRequestsReplication() (AppendEntriesRequest, bool) {
+func (rep *Replicator) fillRequestsReplicating() (AppendEntriesRequest, *InstallSnapshotRequest, bool) {
 	assert(rep.status == replicating, "should in replicating stage")
 
 	args := AppendEntriesRequest{
-		Term:         rep.raft.currentTerm,
+		Term:         rep.term,
 		LeaderId:     rep.me,
 		LeaderCommit: rep.raft.commitIndex,
 	}
 
 	if rep.nextIndex > rep.raft.logs.GetLastLogIndex() {
 		args.Offset = rep.nextIndex
-		return args, false // no entry to append
+		return args, nil, false // no entry to append
 	}
 
 	nextIndex := max(rep.nextIndex-1, 0)
 	ret := rep.raft.logs.RetrieveForward(nextIndex, maxLogEntries)
 
-	if ret.Snapshot != nil {
-		// handle snapshot
+	if ret.Snapshot == nil {
+		args.Offset = ret.Start
+		args.Entries = ret.Logs
+	} else if ret.Snapshot != nil && ret.Start == nextIndex+1 {
+		// only one log in snapshot
+		logs := []Log{
+			{
+				Term: rep.raft.logs.lastSnapshotLogTerm,
+			},
+		}
+		logs = append(logs, ret.Logs...)
+		args.Entries = logs
+		args.Offset = rep.raft.logs.lastSnapshotLogIndex
+	} else {
+		// more than one log in snapshot
+		installSnapshotArgs := InstallSnapshotRequest{
+			Term:              rep.term,
+			LeaderId:          rep.me,
+			LastIncludeIndex:  rep.raft.logs.lastSnapshotLogIndex,
+			LastIncludeTerm:   rep.raft.logs.lastSnapshotLogTerm, //
+			LastSnapshotNoOps: rep.raft.logs.lastSnapshotNoOpCommands,
+			Data:              ret.Snapshot,
+		}
+		return AppendEntriesRequest{}, &installSnapshotArgs, len(ret.Logs) != 0
 	}
-
-	args.Offset = ret.Start
-	args.Entries = ret.Logs
-
-	return args, true
+	return args, nil, true
 }
 
 func (rep *Replicator) update() {
@@ -237,14 +264,20 @@ func (rep *Replicator) update() {
 
 		// hasEntryToAppend == false means no entry to append
 		// but still need to send a heartbeat message
-		args, hasEntryToAppend := rep.fillAppendEntries()
+		args, installSnapshotArgs, hasEntryToAppend := rep.fillRequest()
 		var (
-			reply AppendEntriesReply
-			ok    = false
+			reply                AppendEntriesReply
+			installSnapshotReply InstallSnapshotReply
+			ok                   = false
 		)
 
 		// try to append logs
 		DoWithTimeout(func() {
+			if installSnapshotArgs != nil {
+				rep.tracer.Debugf("try to install snapshot, last include=%d", installSnapshotArgs.LastIncludeIndex)
+				ok = rep.peer.Call("Raft.InstallSnapshot", *installSnapshotArgs, &installSnapshotReply) // may timeout
+				return
+			}
 			rep.tracer.Debugf("try to append entries, start=%d", args.Offset)
 			ok = rep.peer.Call("Raft.AppendEntries", args, &reply) // may timeout
 		}, rep.raft.config.electionTimeout)
@@ -255,11 +288,11 @@ func (rep *Replicator) update() {
 		}
 
 		if !ok { // timeout or network unavailable
-			rep.tracer.Debugf("peer disconnected")
+			rep.tracer.Debugf("peer disconnected, will retry")
 			return
 		}
 
-		if rep.term < args.Term {
+		if (installSnapshotArgs != nil && rep.term < installSnapshotReply.Term) || rep.term < reply.Term {
 			go func() {
 				rep.tracer.Debugf("term behind peer, convert to follower, current term=%d, args term=%d", rep.raft.currentTerm, args.Term)
 				rep.raft.mu.Lock()
@@ -272,7 +305,11 @@ func (rep *Replicator) update() {
 			return
 		}
 
-		rep.handleReply(args, &reply)
+		if installSnapshotArgs != nil {
+			rep.handleInstallSnapshotReply(*installSnapshotArgs, &installSnapshotReply)
+		} else {
+			rep.handleReply(args, &reply)
+		}
 	}
 }
 
@@ -284,6 +321,16 @@ func (rep *Replicator) commit(last int) {
 		index: last,
 	}:
 	}
+}
+
+func (rep *Replicator) handleInstallSnapshotReply(args InstallSnapshotRequest, reply *InstallSnapshotReply) {
+	rep.tracer.Debugf("got InstallSnapshot reply reply=%#v", reply)
+	rep.nextIndex = args.LastIncludeIndex + 1
+
+	if rep.status == matching {
+		rep.status = replicating
+	}
+	rep.commit(args.LastIncludeIndex)
 }
 
 func (rep *Replicator) handleReply(args AppendEntriesRequest, reply *AppendEntriesReply) {

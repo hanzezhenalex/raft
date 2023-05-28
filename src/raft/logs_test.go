@@ -162,7 +162,7 @@ func TestStore_Get(t *testing.T) {
 		t.Run("get one", func(t *testing.T) {
 			t.Run("in snapshot", func(t *testing.T) {
 				ret := s.Get(1, 1)
-				rq.Equal(-1, ret.Start)
+				rq.Equal(2, ret.Start)
 				rq.Equal(0, len(ret.Logs))
 				rq.EqualValues(s.snapshot, ret.Snapshot)
 			})
@@ -179,7 +179,7 @@ func TestStore_Get(t *testing.T) {
 		t.Run("get many", func(t *testing.T) {
 			t.Run("in snapshot", func(t *testing.T) {
 				ret := s.Get(0, 2)
-				rq.Equal(-1, ret.Start)
+				rq.Equal(2, ret.Start)
 				rq.Equal(0, len(ret.Logs))
 				rq.EqualValues(s.snapshot, ret.Snapshot)
 			})
@@ -293,7 +293,6 @@ func TestLogService_AddCommand(t *testing.T) {
 
 	ls.AddCommand(0)
 	rq.Equal(0, ls.lastLogIndex)
-	rq.Equal(0, ls.lastLog.Command)
 	rq.Equal(0, ls.noOp)
 
 	// test 2: Add noop log
@@ -303,7 +302,6 @@ func TestLogService_AddCommand(t *testing.T) {
 
 	ls.AddCommand(noOpCommand)
 	rq.Equal(1, ls.lastLogIndex)
-	rq.Equal(noOpCommand, ls.lastLog.Command)
 	rq.Equal(1, ls.noOp)
 }
 
@@ -313,13 +311,13 @@ func TestLogService_AddLogs(t *testing.T) {
 	ls := NewEmptyLogService()
 	ls.store = mockStore
 	logs := []Log{
-		{Command: "0"}, {Command: "1"}, {Command: "2"}, {Command: "3"}, {Command: noOpCommand}, {Command: "5"}, {Command: "6"},
+		{Command: "0"}, {Command: "1"}, {Command: "2"}, {Command: "3"}, {Command: noOpCommand}, {Command: "5"}, {Term: 1, Command: "6"},
 	}
 	mockStore.EXPECT().Append(logs).Times(1).Return(0)
 
 	ls.AddLogs(logs)
 	rq.Equal(6, ls.lastLogIndex)
-	rq.Equal("6", ls.lastLog.Command)
+	rq.Equal(1, ls.lastLogTerm)
 	rq.Equal(1, ls.noOp)
 }
 
@@ -361,7 +359,7 @@ func TestLogService_Trim(t *testing.T) {
 	})
 	mockStore.EXPECT().Get(10, 10).Return(GetLogsResult{
 		Start:    10,
-		Logs:     []Log{{Command: 10}},
+		Logs:     []Log{{Term: 1, Command: 10}},
 		Snapshot: nil,
 	})
 	mockStore.EXPECT().Trim(10)
@@ -369,7 +367,7 @@ func TestLogService_Trim(t *testing.T) {
 
 	ls.Trim(10)
 	rq.Equal(10, ls.lastLogIndex)
-	rq.Equal(10, ls.lastLog.Command)
+	rq.Equal(1, ls.lastLogTerm)
 	rq.Equal(0, ls.noOp)
 
 	// test 2: last log in snapshot
@@ -387,11 +385,85 @@ func TestLogService_Trim(t *testing.T) {
 	})
 	mockStore.EXPECT().Trim(0)
 	ls.noOp = 1
-	ls.lastSnapshotLog.Command = "snapshot log"
 	ls.lastSnapshotLogIndex = 0
+	ls.lastSnapshotLogTerm = 1
 
 	ls.Trim(0)
 	rq.Equal(0, ls.lastLogIndex)
-	rq.Equal("snapshot log", ls.lastLog.Command)
+	rq.Equal(1, ls.lastLogTerm)
 	rq.Equal(1, ls.noOp)
+}
+
+func TestLogService_Snapshot(t *testing.T) {
+	rq := require.New(t)
+
+	t.Run("build snapshot in logs", func(t *testing.T) {
+		mockStore := NewMockLogStore(gomock.NewController(t))
+		mockStore.EXPECT().Get(0, 1).Return(GetLogsResult{
+			Start: 0,
+			Logs: []Log{
+				{Command: 0}, {Command: noOpCommand},
+			},
+		})
+		mockStore.EXPECT().BuildSnapshot(gomock.Any(), gomock.Any()).Times(1)
+
+		ls := NewEmptyLogService()
+		ls.store = mockStore
+		ls.lastSnapshotNoOpCommands = 0
+		ls.lastSnapshotLogTerm = -1
+		ls.lastSnapshotLogIndex = -1
+		ls.lastLogTerm = 3
+		ls.lastLogIndex = 3
+
+		ls.Snapshot(1, 2, []byte("test"))
+
+		rq.Equal(1, ls.lastSnapshotNoOpCommands)
+		rq.Equal(2, ls.lastSnapshotLogTerm)
+		rq.Equal(1, ls.lastSnapshotLogIndex)
+	})
+
+	t.Run("build snapshot in logs, with snapshot", func(t *testing.T) {
+		mockStore := NewMockLogStore(gomock.NewController(t))
+		mockStore.EXPECT().Get(0, 2).Return(GetLogsResult{
+			Start: 2,
+			Logs: []Log{
+				{Command: noOpCommand},
+			},
+			Snapshot: []byte("test"),
+		})
+		mockStore.EXPECT().BuildSnapshot(gomock.Any(), gomock.Any()).Times(1)
+
+		ls := NewEmptyLogService()
+		ls.store = mockStore
+		ls.lastSnapshotNoOpCommands = 1
+		ls.lastSnapshotLogTerm = 1
+		ls.lastSnapshotLogIndex = 1
+		ls.lastLogTerm = 3
+		ls.lastLogIndex = 3
+
+		ls.Snapshot(2, 2, []byte("test"))
+
+		rq.Equal(2, ls.lastSnapshotNoOpCommands)
+		rq.Equal(2, ls.lastSnapshotLogTerm)
+		rq.Equal(2, ls.lastSnapshotLogIndex)
+	})
+
+	t.Run("build snapshot outside logs", func(t *testing.T) {
+		mockStore := NewMockLogStore(gomock.NewController(t))
+		mockStore.EXPECT().BuildSnapshot(gomock.Any(), gomock.Any()).Times(1)
+
+		ls := NewEmptyLogService()
+		ls.store = mockStore
+		ls.lastSnapshotNoOpCommands = 0
+		ls.lastSnapshotLogTerm = -1
+		ls.lastSnapshotLogIndex = -1
+		ls.lastLogTerm = 3
+		ls.lastLogIndex = 3
+
+		ls.Snapshot(4, 2, []byte("test"))
+
+		rq.Equal(0, ls.lastSnapshotNoOpCommands)
+		rq.Equal(2, ls.lastSnapshotLogTerm)
+		rq.Equal(4, ls.lastSnapshotLogIndex)
+	})
 }

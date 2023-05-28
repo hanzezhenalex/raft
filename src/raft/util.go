@@ -10,8 +10,7 @@ import (
 
 var (
 	noOpCommand = "no-op"
-
-	logBuffer = new(bytes.Buffer)
+	logBuffer   = new(bytes.Buffer)
 )
 
 func init() {
@@ -33,6 +32,12 @@ func DPrintf(format string, a ...interface{}) {
 	printBounder()
 }
 
+//func DPrintf(format string, a ...interface{}) {
+//	fmt.Println("====================================================")
+//	fmt.Printf(fmt.Sprintf("%s \r\n", format), a...)
+//	fmt.Println("====================================================")
+//}
+
 func max(a, b int) int {
 	if a > b {
 		return a
@@ -49,6 +54,7 @@ func min(a, b int) int {
 
 func assert(cond bool, format string, args ...interface{}) {
 	if !cond {
+		fmt.Print(logBuffer.String()) // print logs first
 		panic(fmt.Sprintf(format, args...))
 	}
 }

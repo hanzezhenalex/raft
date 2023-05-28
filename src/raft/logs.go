@@ -18,11 +18,12 @@ type LogState struct {
 
 type ServiceState struct {
 	LogState
-	LastLog              Log
-	LastLogIndex         int
-	LastSnapshotLog      Log
-	LastSnapshotLogIndex int
-	NoOp                 int
+	LastLogTerm              int
+	LastLogIndex             int
+	LastSnapshotLogIndex     int
+	LastSnapshotLogTerm      int
+	LastSnapshotNoOpCommands int
+	NoOp                     int
 }
 
 func DefaultServiceState() ServiceState {
@@ -30,8 +31,9 @@ func DefaultServiceState() ServiceState {
 		LogState: LogState{
 			LastIndexOfSnapshot: -1,
 		},
-		LastSnapshotLogIndex: -1,
-		LastLogIndex:         -1,
+		LastSnapshotLogIndex:     -1,
+		LastLogIndex:             -1,
+		LastSnapshotNoOpCommands: 0,
 	}
 }
 
@@ -49,23 +51,25 @@ type LogService struct {
 	store  LogStore
 	tracer *logrus.Entry
 
-	lastLog              Log
-	lastLogIndex         int
-	lastSnapshotLog      Log
-	lastSnapshotLogIndex int
-	noOp                 int
+	lastLogTerm              int
+	lastLogIndex             int
+	lastSnapshotLogIndex     int
+	lastSnapshotLogTerm      int
+	lastSnapshotNoOpCommands int // number of no-op commands contains in snapshot
+	noOp                     int
 }
 
 func NewLogService(raft *Raft, state ServiceState, tracer *logrus.Entry) *LogService {
 	return &LogService{
-		raft:                 raft,
-		store:                NewStore(state.LogState),
-		lastLogIndex:         state.LastLogIndex,
-		lastLog:              state.LastLog,
-		lastSnapshotLogIndex: state.LastSnapshotLogIndex,
-		lastSnapshotLog:      state.LastSnapshotLog,
-		noOp:                 state.NoOp,
-		tracer:               tracer,
+		raft:                     raft,
+		store:                    NewStore(state.LogState),
+		lastLogIndex:             state.LastLogIndex,
+		lastLogTerm:              state.LastLogTerm,
+		lastSnapshotLogIndex:     state.LastSnapshotLogIndex,
+		lastSnapshotLogTerm:      state.LastSnapshotLogTerm,
+		lastSnapshotNoOpCommands: state.LastSnapshotNoOpCommands,
+		noOp:                     state.NoOp,
+		tracer:                   tracer,
 	}
 }
 
@@ -78,7 +82,7 @@ func (ls *LogService) AddCommand(command interface{}) int {
 		Command: command,
 	}
 	ls.lastLogIndex++
-	ls.lastLog = newLog
+	ls.lastLogTerm = newLog.Term
 	return ls.store.Append(newLog)
 }
 
@@ -91,7 +95,7 @@ func (ls *LogService) AddLogs(logs []Log) {
 			ls.noOp++
 		}
 	}
-	ls.lastLog = logs[len(logs)-1]
+	ls.lastLogTerm = logs[len(logs)-1].Term
 	ls.lastLogIndex += len(logs)
 	ls.store.Append(logs...)
 }
@@ -120,24 +124,33 @@ func (ls *LogService) RetrieveBackward(end int, length int) GetLogsResult {
 
 func (ls *LogService) GetState() ServiceState {
 	return ServiceState{
-		LogState:     ls.store.GetState(),
-		LastLog:      ls.lastLog,
-		LastLogIndex: ls.lastLogIndex,
-		NoOp:         ls.noOp,
+		LogState:                 ls.store.GetState(),
+		LastLogTerm:              ls.lastLogTerm,
+		LastLogIndex:             ls.lastLogIndex,
+		LastSnapshotLogTerm:      ls.lastSnapshotLogTerm,
+		LastSnapshotNoOpCommands: ls.lastSnapshotNoOpCommands,
+		NoOp:                     ls.noOp,
 	}
 }
 
 func (ls *LogService) Trim(end int) *LogService {
+	if end < 0 {
+		ls.lastLogIndex = -1
+		ls.lastLogTerm = -1
+
+		assert(ls.lastSnapshotLogIndex <= 0, "should not trim committed logs, index=%d", ls.lastSnapshotLogIndex)
+		ls.store.Trim(-1)
+		return ls
+	}
+
 	if end > ls.store.Length() {
 		panic("out of range")
 	}
+
 	// update noOp
 	if end+1 < ls.store.Length() {
 		toRemove := ls.store.Get(end+1, ls.store.Length()-1)
-		if toRemove.Snapshot != nil {
-			// todo log warning
-			panic("should not trim committed logs")
-		}
+		assert(toRemove.Snapshot == nil, "should not trim committed logs")
 		for _, log := range toRemove.Logs {
 			if log.Command == noOpCommand {
 				ls.noOp--
@@ -146,18 +159,13 @@ func (ls *LogService) Trim(end int) *LogService {
 	}
 
 	// update lastLog
-	if end < 0 {
-		ls.lastLogIndex = -1
-		assert(ls.lastSnapshotLogIndex <= end, "should not trim committed logs, index=%d", ls.lastSnapshotLogIndex)
+	ret := ls.store.Get(end, end)
+	if ret.Snapshot == nil {
+		ls.lastLogIndex = ret.Start
+		ls.lastLogTerm = ret.Logs[0].Term
 	} else {
-		ret := ls.store.Get(end, end)
-		if ret.Snapshot == nil {
-			ls.lastLogIndex = ret.Start
-			ls.lastLog = ret.Logs[0]
-		} else {
-			ls.lastLogIndex = ls.lastSnapshotLogIndex
-			ls.lastLog = ls.lastSnapshotLog
-		}
+		ls.lastLogIndex = ls.lastSnapshotLogIndex
+		ls.lastLogTerm = ls.lastSnapshotLogTerm
 	}
 
 	// do trim
@@ -165,14 +173,31 @@ func (ls *LogService) Trim(end int) *LogService {
 	return ls
 }
 
-func (ls *LogService) Snapshot(index int, snapshot []byte) {
-	ret := ls.store.Get(index, index)
-	if ret.Snapshot != nil {
+func (ls *LogService) Snapshot(index int, term int, snapshot []byte) {
+	if index <= ls.lastSnapshotLogIndex {
 		return
 	}
-	ls.lastSnapshotLogIndex = ret.Start
-	ls.lastSnapshotLog = ret.Logs[0]
+	ls.lastSnapshotLogIndex = index
+	ls.lastSnapshotLogTerm = term
+	if index > ls.lastLogIndex {
+		ls.lastLogIndex = index
+		ls.lastLogTerm = term
+	} else {
+		noOpCnt := 0
+		logs := ls.store.Get(0, index)
+		for _, log := range logs.Logs {
+			if log.Command == noOpCommand {
+				noOpCnt++
+			}
+		}
+		ls.lastSnapshotNoOpCommands += noOpCnt
+	}
 	ls.store.BuildSnapshot(index, snapshot)
+}
+
+func (ls *LogService) SetSnapshotNoop(n int) {
+	ls.lastSnapshotNoOpCommands = n
+	ls.noOp = ls.lastSnapshotNoOpCommands
 }
 
 func (ls *LogService) FromNoOpIndex(index int) int {
@@ -191,15 +216,15 @@ func (ls *LogService) IsPeerLogAhead(args RequestVoteArgs) bool {
 	if ls.lastLogIndex == -1 {
 		return true
 	}
-	return args.LastLogTerm > ls.lastLog.Term ||
-		(args.LastLogTerm == ls.lastLog.Term && args.LastLogIndex >= ls.lastLogIndex)
+	return args.LastLogTerm > ls.lastLogTerm ||
+		(args.LastLogTerm == ls.lastLogTerm && args.LastLogIndex >= ls.lastLogIndex)
 }
 
 func (ls *LogService) GetLastLogTerm() int {
 	if ls.lastLogIndex == -1 {
 		return -1
 	}
-	return ls.lastLog.Term
+	return ls.lastLogTerm
 }
 
 func (ls *LogService) GetLastLogIndex() int {
@@ -252,7 +277,7 @@ func (s *Store) Get(left, right int) GetLogsResult {
 	left, right = s.toLogIndex(left), s.toLogIndex(right)
 	if left < 0 {
 		left = 0
-		ret.Start = -1
+		ret.Start = s.lastIndexOfSnapshot
 		ret.Snapshot = s.snapshot
 	}
 	if right >= 0 {
@@ -270,12 +295,12 @@ func (s *Store) Trim(end int) {
 }
 
 func (s *Store) BuildSnapshot(index int, snapshot []byte) {
-	logsIndex := s.toLogIndex(index)
+	logsIndex := s._toLogIndex(index)
 	if logsIndex < 0 {
 		// todo log waring
 		return
 	}
-	if logsIndex == len(s.logs)-1 {
+	if logsIndex >= len(s.logs)-1 {
 		s.logs = s.logs[:0]
 	} else {
 		s.logs = s.logs[logsIndex+1:] // todo test
@@ -298,6 +323,10 @@ func (s *Store) toLogIndex(index int) int {
 		panic("out of range")
 	}
 	return index
+}
+
+func (s *Store) _toLogIndex(index int) int {
+	return index - s.lastIndexOfSnapshot - 1
 }
 
 func (s *Store) fromLogIndex(index int) int {
