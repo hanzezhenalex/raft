@@ -181,8 +181,8 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 func (rf *Raft) printStatus(prefix string) {
-	status := fmt.Sprintf("term=%d, last log=%d, dcommitIndex=%d, lastApplied=%d, leader=%t, snapshot=%d",
-		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.applier.lastApplied, rf.isLeader, rf.logs.lastSnapshotLogIndex)
+	status := fmt.Sprintf("term=%d, last log=%d, dcommitIndex=%d, lastApplied=%d, leader=%t, snapshot=%d, nextIndex=%d",
+		rf.currentTerm, rf.logs.lastLogIndex, rf.commitIndex, rf.applier.lastApplied, rf.isLeader, rf.logs.lastSnapshotLogIndex, rf.applier.nextIndex)
 	rf.tracer.Debugf("[%s]raft status: %s", prefix, status)
 }
 
@@ -417,6 +417,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 			myLog := ret.Logs[match]
 			leaderLog := args.Entries[retLogIndexToArgsLogIndex(match)]
 			if myLog.Term == leaderLog.Term {
+				match = retLogIndexToLogServiceIndex(match)
 				break
 			}
 		}
@@ -425,7 +426,7 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	if ret.Snapshot != nil && match == -1 {
 		lastIncludeIndex := logServiceIndexToArgsLogIndex(rf.logs.lastSnapshotLogIndex)
 		if rf.logs.lastSnapshotLogTerm == args.Entries[lastIncludeIndex].Term {
-			match = lastIncludeIndex
+			match = argsLogIndexToLogServiceIndex(lastIncludeIndex)
 		}
 	}
 
@@ -433,11 +434,11 @@ func (rf *Raft) tryAppendEntries(args AppendEntriesRequest, reply *AppendEntries
 	// 1) log matches, index = match, append at match+1
 	// 2) snapshot exists, match = last snapshot index, append at match+1
 	if match >= 0 {
-		rf.tracer.Debugf("log matched, index=%d", retLogIndexToLogServiceIndex(match))
+		rf.tracer.Debugf("log matched, index=%d", match)
 
-		offset := retLogIndexToArgsLogIndex(match) + 1
+		offset := logServiceIndexToArgsLogIndex(match) + 1
 		if offset < len(args.Entries) { // in case args.Entries are empty
-			rf.logs.Trim(retLogIndexToLogServiceIndex(match)).AddLogs(args.Entries[offset:])
+			rf.logs.Trim(match).AddLogs(args.Entries[offset:])
 			rf.persist()
 		}
 
@@ -648,6 +649,9 @@ type InstallSnapshotReply struct {
 }
 
 func (rf *Raft) InstallSnapshot(args InstallSnapshotRequest, reply *InstallSnapshotReply) {
+	rf.tracer.Debugf("req install snapshot, LastIncludeIndex=%d, LastSnapshotNoOps=%d",
+		args.LastIncludeIndex, args.LastSnapshotNoOps)
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 

@@ -292,7 +292,7 @@ func (rep *Replicator) update() {
 			return
 		}
 
-		if (installSnapshotArgs != nil && rep.term < installSnapshotReply.Term) || rep.term < args.Term {
+		if (installSnapshotArgs != nil && rep.term < installSnapshotReply.Term) || rep.term < reply.Term {
 			go func() {
 				rep.tracer.Debugf("term behind peer, convert to follower, current term=%d, args term=%d", rep.raft.currentTerm, args.Term)
 				rep.raft.mu.Lock()

@@ -95,7 +95,8 @@ func (apl *Applier) doApply(req ApplyRequest) {
 }
 
 func (apl *Applier) doApplySnapshot(req ApplySnapshotRequest) {
-	apl.tracer.Debugf("apply snapshot req: lastInclude=%d", req.LastIncludeIndex)
+	apl.tracer.Debugf("apply snapshot req: lastInclude=%d, LastIncludeNoops=%d",
+		req.LastIncludeIndex, req.LastIncludeNoops)
 
 	apl.applyCh <- ApplyMsg{
 		SnapshotValid: true,
@@ -125,6 +126,7 @@ func (apl *Applier) doApplySnapshot(req ApplySnapshotRequest) {
 	}
 
 	if req.LastIncludeIndex >= apl.nextIndex {
+		apl.tracer.Debug("snapshot index bigger than nextIndex")
 		apl.lastApplied = req.LastIncludeIndex - req.LastIncludeNoops
 		apl.nextIndex = req.LastIncludeIndex + 1
 	}

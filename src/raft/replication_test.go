@@ -431,6 +431,25 @@ func TestRaft_tryAppendEntries_snapshot(t *testing.T) {
 			},
 			expectedRaftLogs: 4,
 		},
+		{
+			name:             "last entry in snapshot",
+			logs:             1,
+			lastIncludeIndex: 1,
+			snapshot:         []byte("test"),
+			args: AppendEntriesRequest{
+				Offset: 1,
+				Entries: []Log{
+					{
+						Term:    1,
+						Command: "1",
+					},
+				}},
+			expectedReply: AppendEntriesReply{
+				Success: true,
+				Next:    2,
+			},
+			expectedRaftLogs: 2,
+		},
 	}
 
 	for _, c := range cases {
